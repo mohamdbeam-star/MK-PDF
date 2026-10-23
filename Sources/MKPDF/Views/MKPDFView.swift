@@ -114,8 +114,9 @@ final class MKPDFView: PDFView {
 
     override func mouseDown(with event: NSEvent) {
         guard let editor else { return super.mouseDown(with: event) }
-        window?.makeFirstResponder(self)
         let viewPoint = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(viewPoint) else { return } // stray events routed from elsewhere
+        if contentEdit.session == nil { window?.makeFirstResponder(self) }
         guard let (page, point) = location(event) else { return super.mouseDown(with: event) }
         let tool = editor.tool
 

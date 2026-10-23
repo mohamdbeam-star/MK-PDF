@@ -52,6 +52,7 @@ struct SidebarView: View {
             case .search: SearchSidebar(editor: editor, document: document)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -128,6 +129,7 @@ struct BookmarkSidebar: View {
         VStack(spacing: 0) {
             if nodes.isEmpty {
                 ContentUnavailableView("No Bookmarks", systemImage: "bookmark", description: Text("Add a bookmark for the current page."))
+                    .frame(maxHeight: .infinity)
             } else {
                 List(nodes, children: \.children) { node in
                     Text(node.outline.label ?? "Untitled")
@@ -208,6 +210,7 @@ struct CommentsSidebar: View {
             TextField("Filter comments", text: $filter).textFieldStyle(.roundedBorder).padding(8)
             if comments.isEmpty {
                 ContentUnavailableView("No Comments", systemImage: "text.bubble", description: Text("Highlights, notes and drawings appear here."))
+                    .frame(maxHeight: .infinity)
             } else {
                 List(comments, id: \.self) { a in
                     HStack(alignment: .top, spacing: 8) {
@@ -219,7 +222,7 @@ struct CommentsSidebar: View {
                                 Spacer()
                                 Text("p. \(a.page.map { editor.pdf.index(for: $0) + 1 } ?? 0)").font(.caption).foregroundStyle(.secondary)
                             }
-                            if let text = a.contents, !text.isEmpty {
+                            if let text = a.contents.flatMap({ $0.isEmpty ? nil : $0 }) ?? markedText(a) {
                                 Text(text).font(.caption).lineLimit(3)
                             }
                             Text([a.userName, a.modificationDate?.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · "))
@@ -238,6 +241,13 @@ struct CommentsSidebar: View {
     }
 }
 
+/// The page text under a highlight, underline or strikethrough.
+private func markedText(_ a: PDFAnnotation) -> String? {
+    guard ["Highlight", "Underline", "StrikeOut"].contains(a.type ?? ""), let page = a.page else { return nil }
+    let s = page.selection(for: a.bounds.insetBy(dx: 0, dy: a.bounds.height * 0.2))?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return s?.isEmpty == false ? s : nil
+}
+
 struct SearchSidebar: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var document: PDFFileDocument
@@ -245,12 +255,18 @@ struct SearchSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                TextField("Search", text: $editor.searchText).textFieldStyle(.roundedBorder).onSubmit { editor.runSearch() }
+                TextField("Search", text: $editor.searchText).textFieldStyle(.roundedBorder)
+                    .onSubmit { editor.runSearch() }
+                    .onChange(of: editor.searchText) { _, text in
+                        // Search as you type once there's enough to match.
+                        if text.count >= 2 || text.isEmpty { editor.runSearch() }
+                    }
                 Toggle("Aa", isOn: $editor.searchCaseSensitive).toggleStyle(.button).help("Match case")
             }
             .padding(8)
             if editor.searchResults.isEmpty {
                 ContentUnavailableView(editor.searchText.isEmpty ? "Search" : "No Results", systemImage: "magnifyingglass")
+                    .frame(maxHeight: .infinity)
             } else {
                 Text("\(editor.searchResults.count) results").font(.caption).foregroundStyle(.secondary)
                 List(Array(editor.searchResults.enumerated()), id: \.offset) { _, result in

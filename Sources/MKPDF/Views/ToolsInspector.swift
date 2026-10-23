@@ -11,7 +11,7 @@ struct ToolsInspector: View {
                 ForEach(ToolPanel.allCases) { panel in
                     Button {
                         editor.panel = panel
-                        if panel == .organize { editor.organizing = true }
+                        editor.organizing = panel == .organize
                     } label: {
                         VStack(spacing: 3) {
                             Image(systemName: panel.symbol).font(.system(size: 15)).frame(height: 18)
@@ -29,6 +29,12 @@ struct ToolsInspector: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    // The selected annotation's properties come first so they're visible without scrolling.
+                    if let a = editor.selectedAnnotation, editor.panel != .forms {
+                        AnnotationInspector(editor: editor, annotation: a, revision: document.revision)
+                            .padding(10)
+                            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                    }
                     Text(editor.panel.title).font(.title3.bold())
                     switch editor.panel {
                     case .comment: CommentPanel(editor: editor)
@@ -43,10 +49,6 @@ struct ToolsInspector: View {
                     case .export: ExportPanel(editor: editor)
                     case .ai: AIPanel(editor: editor)
                     case .more: MorePanel(editor: editor)
-                    }
-                    if let a = editor.selectedAnnotation, editor.panel != .forms {
-                        Divider()
-                        AnnotationInspector(editor: editor, annotation: a, revision: document.revision)
                     }
                 }
                 .padding(14)

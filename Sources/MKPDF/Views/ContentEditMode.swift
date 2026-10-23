@@ -13,6 +13,15 @@ struct EditStyle: Equatable {
 final class InlineTextView: NSTextView {
     var onCommit: () -> Void = {}
     var onCancel: () -> Void = {}
+    var onChange: () -> Void = {}
+    /// Typing undo stays inside the editor; the document gets one undo step when the edit is applied.
+    private let localUndo = UndoManager()
+    override var undoManager: UndoManager? { localUndo }
+
+    override func didChangeText() {
+        super.didChangeText()
+        onChange()
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { return onCancel() }
@@ -65,7 +74,14 @@ extension MKPDFView {
     func editMouseDown(_ event: NSEvent, page: PDFPage, point: CGPoint) {
         guard let editor else { return }
         let viewPoint = convert(event.locationInWindow, from: nil)
-        if contentEdit.session != nil { commitSession() }
+        if let s = contentEdit.session {
+            // Clicks that land on the inline editor belong to it (it can sit under PDFKit's own subviews).
+            if s.textView.frame.contains(viewPoint) {
+                window?.makeFirstResponder(s.textView)
+                return s.textView.mouseDown(with: event)
+            }
+            commitSession()
+        }
 
         if let (selPage, obj) = editor.editObject, selPage === page {
             let handle = convert(CGPoint(x: obj.bounds.maxX, y: obj.bounds.minY), from: page)
@@ -109,6 +125,7 @@ extension MKPDFView {
         switch drag {
         case .block(let page, let block, let start, let current):
             let dx = current.x - start.x, dy = current.y - start.y
+            contentEdit.hovered = nil
             if hypot(dx, dy) < 3 {
                 beginSession(page: page, block: block, origin: CGPoint(x: block.rect.minX, y: block.firstBaseline))
             } else {
@@ -117,6 +134,7 @@ extension MKPDFView {
                                       width: block.isMultiline ? block.rect.width + 2 : nil, box: block.rect.width)
             }
         case .object(let page, let obj, _, _, _):
+            contentEdit.hovered = nil
             let rect = Self.draggedRect(drag)
             if !rect.equalTo(obj.bounds) {
                 editor.moveObject(obj, on: page, to: rect)
@@ -176,6 +194,7 @@ extension MKPDFView {
         tv.layer?.borderWidth = 1
         tv.onCommit = { [weak self] in self?.commitSession() }
         tv.onCancel = { [weak self] in self?.cancelSession() }
+        tv.onChange = { [weak self] in self?.layoutSession() }
         addSubview(tv, positioned: .below, relativeTo: overlay)
         contentEdit.session = ContentEditState.Session(page: page, block: block, origin: origin, textView: tv)
         editor.editStyle = style
@@ -308,3 +327,4 @@ extension MKPDFView {
         }
     }
 }
+

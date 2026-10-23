@@ -11,6 +11,7 @@ struct MKPDFApp: App {
         DocumentGroup(newDocument: { PDFFileDocument() }) { file in
             DocumentWindow(document: file.document, fileURL: file.fileURL)
         }
+        .defaultSize(width: 1280, height: 860)
         .commands { MKPDFCommands() }
 
         Window("MK PDF", id: "home") {
@@ -38,6 +39,11 @@ struct MKPDFApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // The home window takes the place of the Open panel macOS shows for document apps at launch.
+        UserDefaults.standard.set(false, forKey: "NSShowAppCentricOpenPanelInsteadOfUntitledFile")
+    }
+
     // The home window replaces the empty untitled document macOS would otherwise open at launch.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
 }

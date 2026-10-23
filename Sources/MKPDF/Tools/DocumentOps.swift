@@ -84,7 +84,7 @@ extension EditorModel {
 
     /// Permanently removes content under redaction marks.
     func applyRedactions(dpi: CGFloat, ocr: Bool) {
-        guard Panels.confirm("Apply redactions?", message: "Marked content is permanently removed when you save. Pages with marks become images" + (ocr ? " with recognized text." : "."), ok: "Apply", destructive: true) else { return }
+        guard Panels.confirm("Apply redactions?", message: "The marked text and images are permanently removed from the document when you save.", ok: "Apply", destructive: true) else { return }
         guard let copy = PDFExporter.copy(of: pdf) else { return }
         var work: [(Int, PDFPage, [CGRect])] = []
         for (i, page) in copy.pages.enumerated() {

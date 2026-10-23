@@ -22,7 +22,7 @@ struct HomeView: View {
                     AppMark().frame(width: 44, height: 44)
                     VStack(alignment: .leading) {
                         Text("MK PDF").font(.largeTitle.bold())
-                        Text("View, edit, sign and convert PDFs").foregroundStyle(.secondary)
+                        Text("View, edit, sign and convert PDFs").foregroundStyle(.secondary).fixedSize()
                     }
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(150), spacing: 12), count: 3), spacing: 12) {
@@ -74,6 +74,9 @@ struct HomeView: View {
         }
         .frame(width: 830, height: 470)
         .onAppear { recents = NSDocumentController.shared.recentDocumentURLs }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            recents = NSDocumentController.shared.recentDocumentURLs
+        }
     }
 
     private var tiles: [Tile] {

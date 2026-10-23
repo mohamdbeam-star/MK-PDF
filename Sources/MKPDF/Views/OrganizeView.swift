@@ -13,25 +13,30 @@ struct OrganizeView: View {
     var body: some View {
         let pages = document.pdf.pages
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Button { editor.rotate(selectedPages, by: -90) } label: { Label("Rotate Left", systemImage: "rotate.left") }
-                Button { editor.rotate(selectedPages, by: 90) } label: { Label("Rotate Right", systemImage: "rotate.right") }
-                Button(role: .destructive) { deleteSelection() } label: { Label("Delete", systemImage: "trash") }
-                Divider().frame(height: 18)
-                Button { editor.insertBlankPage(after: selection.max() ?? document.pdf.pageCount - 1) } label: { Label("Insert Blank", systemImage: "doc.badge.plus") }
-                Button { editor.insertFromFile(after: selection.max() ?? document.pdf.pageCount - 1) } label: { Label("Insert File", systemImage: "doc.on.doc") }
-                Button { editor.duplicatePages(sortedSelection) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                Button { if let doc = editor.extractedDocument(sortedSelection) { DocumentLauncher.open(doc) } } label: { Label("Extract", systemImage: "square.and.arrow.up.on.square") }
-                Button { editor.sheet = .split } label: { Label("Split", systemImage: "scissors") }
-                Button { reverse() } label: { Label("Reverse", systemImage: "arrow.up.arrow.down") }
-                Spacer()
-                Text(selection.isEmpty ? "\(pages.count) pages" : "\(selection.count) of \(pages.count) selected")
-                    .foregroundStyle(.secondary).font(.callout)
-                Slider(value: $thumbWidth, in: 90...300).frame(width: 110).help("Thumbnail size")
-                Button("Done") { editor.organizing = false }.keyboardShortcut(.cancelAction)
+            HStack(spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        Button { editor.rotate(selectedPages, by: -90) } label: { Label("Rotate Left", systemImage: "rotate.left") }
+                        Button { editor.rotate(selectedPages, by: 90) } label: { Label("Rotate Right", systemImage: "rotate.right") }
+                        Button(role: .destructive) { deleteSelection() } label: { Label("Delete", systemImage: "trash") }
+                        Divider().frame(height: 18)
+                        Button { editor.insertBlankPage(after: selection.max() ?? document.pdf.pageCount - 1) } label: { Label("Insert Blank", systemImage: "doc.badge.plus") }
+                        Button { editor.insertFromFile(after: selection.max() ?? document.pdf.pageCount - 1) } label: { Label("Insert File", systemImage: "doc.on.doc") }
+                        Button { editor.duplicatePages(sortedSelection) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                        Button { if let doc = editor.extractedDocument(sortedSelection) { DocumentLauncher.open(doc) } } label: { Label("Extract", systemImage: "square.and.arrow.up.on.square") }
+                        Button { editor.sheet = .split } label: { Label("Split", systemImage: "scissors") }
+                        Button { reverse() } label: { Label("Reverse", systemImage: "arrow.up.arrow.down") }
+                    }
+                    .padding(.vertical, 4)
+                }
+                Text(selection.isEmpty ? "\(pages.count) pages" : "\(selection.count)/\(pages.count)")
+                    .foregroundStyle(.secondary).font(.callout).fixedSize()
+                Slider(value: $thumbWidth, in: 90...300).frame(width: 80).help("Thumbnail size")
+                Button("Done") { editor.organizing = false }.keyboardShortcut(.cancelAction).fixedSize()
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(editor.busy != nil)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

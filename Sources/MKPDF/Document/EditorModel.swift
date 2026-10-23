@@ -347,7 +347,6 @@ final class EditorModel: ObservableObject {
                 guard bounds.width > 1 else { continue }
                 let a = PDFAnnotation(bounds: bounds, forType: subtype, withProperties: nil)
                 a.color = lineColor
-                a.contents = line.string
                 add(a, to: page, select: false, name: tool.title)
             }
         }

@@ -77,8 +77,8 @@ struct FillSignPanel: View {
             .help("Click, then click on the page to place it")
         }
         HStack {
-            Button { editor.sheet = .signature } label: { Label("Add Signature", systemImage: "signature") }
-            Button { editor.sheet = .initials } label: { Label("Add Initials", systemImage: "textformat") }
+            Button { editor.sheet = .signature } label: { Label("Signature", systemImage: "plus") }
+            Button { editor.sheet = .initials } label: { Label("Initials", systemImage: "plus") }
         }
         SectionTitle("Finish")
         ActionRow(title: "Clear form fields", symbol: "eraser") { editor.clearForm() }

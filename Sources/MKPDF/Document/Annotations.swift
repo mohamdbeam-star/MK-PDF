@@ -76,8 +76,9 @@ enum RedactionMark {
         return a
     }
 
+    /// PDFKit doesn't write the name key, so saved marks are recognised by their comment too.
     static func isMark(_ a: PDFAnnotation) -> Bool {
-        (a.value(forAnnotationKey: .name) as? String) == tag
+        (a.value(forAnnotationKey: .name) as? String) == tag || (a.type == "Square" && a.contents == "Redaction mark")
     }
 }
 
