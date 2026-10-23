@@ -1,5 +1,6 @@
 import SwiftUI
 import PDFKit
+import UserNotifications
 
 @main
 struct MKPDFApp: App {
@@ -20,6 +21,11 @@ struct MKPDFApp: App {
         .defaultLaunchBehavior(.presented)
         .windowResizability(.contentSize)
 
+        Window("Batch Process", id: "batch") {
+            BatchView()
+        }
+        .defaultSize(width: 640, height: 560)
+
         Window("Combine Files", id: "combine") {
             CombineView()
         }
@@ -38,7 +44,30 @@ struct MKPDFApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Appearance.apply()
+        UNUserNotificationCenter.current().delegate = self
+        Notifier.requestPermission()
+        UpdateChecker.shared.startAutomaticChecks()
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.content.categoryIdentifier == Notifier.updateCategory {
+            DispatchQueue.main.async {
+                if response.actionIdentifier == "download" { UpdateChecker.shared.downloadAndInstall() }
+                else { UpdateChecker.shared.promptToInstall() }
+            }
+        }
+        completionHandler()
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // The home window takes the place of the Open panel macOS shows for document apps at launch.
         UserDefaults.standard.set(false, forKey: "NSShowAppCentricOpenPanelInsteadOfUntitledFile")

@@ -6,6 +6,7 @@ import MKPDFCore
 /// lists text blocks, rewrites the first paragraph, moves the first image and saves. Used to verify releases.
 enum EditSmokeTest {
     static func runIfRequested() {
+        runFeatureTestIfRequested()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--edit-smoke-test"), args.count > i + 2 else { return }
         let input = URL(fileURLWithPath: args[i + 1]), output = URL(fileURLWithPath: args[i + 2])
@@ -42,5 +43,39 @@ enum EditSmokeTest {
             print(error)
             exit(1)
         }
+    }
+}
+
+extension EditSmokeTest {
+    /// `MKPDF --feature-smoke-test in.pdf outdir` writes Excel, PowerPoint, extracted images, a repaired copy,
+    /// and checks the update version logic.
+    static func runFeatureTestIfRequested() {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--feature-smoke-test"), args.count > i + 2 else { return }
+        let input = URL(fileURLWithPath: args[i + 1]), out = URL(fileURLWithPath: args[i + 2], isDirectory: true)
+        try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        guard let doc = PDFDocument(url: input) else { print("can't open"); exit(1) }
+        for row in doc.page(at: 0).map(ContentEditor.table(on:)) ?? [] { print("row:", row) }
+        try? OfficeExport.xlsx(doc).write(to: out.appendingPathComponent("out.xlsx"))
+        try? OfficeExport.pptx(doc).write(to: out.appendingPathComponent("out.pptx"))
+        print("images:", (try? ImageExtractor.extract(doc, to: out, name: "img")) ?? -1)
+        let batchDir = out.appendingPathComponent("batch")
+        try? FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
+        let group = DispatchGroup()
+        group.enter()
+        Task { @MainActor in
+            for op in BatchView.Operation.allCases {
+                do {
+                    try await BatchJob(operation: op, password: "test1234").process(input, into: batchDir)
+                    print("batch ✓", op.rawValue)
+                } catch { print("batch ✗", op.rawValue, error.localizedDescription) }
+            }
+            group.leave()
+        }
+        while group.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print("newer 1.10.0>1.9.2:", UpdateChecker.isNewer("1.10.0", than: "1.9.2"), " 1.1.0>1.1.0:", UpdateChecker.isNewer("1.1.0", than: "1.1.0"))
+        let sample = #"{"tag_name":"v1.2.0","html_url":"https://github.com/x/y/releases/tag/v1.2.0","body":"Notes","assets":[{"name":"MK-PDF-1.2.0.dmg","browser_download_url":"https://github.com/x/y/releases/download/v1.2.0/MK-PDF-1.2.0.dmg"}]}"#
+        print("parsed:", UpdateChecker.parse(Data(sample.utf8)).map { "\($0.version) \($0.dmg?.lastPathComponent ?? "-")" } ?? "nil")
+        exit(0)
     }
 }

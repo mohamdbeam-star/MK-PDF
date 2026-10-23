@@ -228,6 +228,24 @@ final class MKPDFView: PDFView {
 
     override func keyDown(with event: NSEvent) {
         guard let editor else { return super.keyDown(with: event) }
+        // Arrow keys nudge the selection by a point (ten with Shift).
+        if [123, 124, 125, 126].contains(event.keyCode), editor.selectedAnnotation?.isMovable == true || editor.editObject != nil {
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            let d: CGPoint = [123: CGPoint(x: -step, y: 0), 124: CGPoint(x: step, y: 0), 125: CGPoint(x: 0, y: -step), 126: CGPoint(x: 0, y: step)][event.keyCode]!
+            if let a = editor.selectedAnnotation {
+                editor.modify(a, name: "Nudge") { $0.bounds = $0.bounds.offsetBy(dx: d.x, dy: d.y) }
+            } else if let (page, obj) = editor.editObject {
+                let index = editor.pdf.index(for: page)
+                let target = obj.bounds.offsetBy(dx: d.x, dy: d.y)
+                editor.moveObject(obj, on: page, to: target)
+                // Keep the same image selected on the rewritten page.
+                if index != NSNotFound, let newPage = editor.pdf.page(at: index),
+                   let moved = ContentEditor.objects(on: newPage).min(by: { hypot($0.bounds.midX - target.midX, $0.bounds.midY - target.midY) < hypot($1.bounds.midX - target.midX, $1.bounds.midY - target.midY) }) {
+                    editor.editObject = (newPage, moved)
+                }
+            }
+            return
+        }
         switch event.keyCode {
         case 51, 117 where editor.editObject != nil:
             if let (page, obj) = editor.editObject { editor.deleteObject(obj, on: page) }

@@ -166,6 +166,8 @@ final class EditorModel: ObservableObject {
     @Published var scalePercent = 100
     @Published var displayMode: PDFDisplayMode = .singlePageContinuous { didSet { pdfView?.displayMode = displayMode } }
     @Published var nightMode = false
+    /// Two-page layouts read right to left (Arabic, Hebrew books).
+    @Published var rightToLeft = false { didSet { pdfView?.displaysRTL = rightToLeft } }
 
     @Published var busy: String?
     @Published var progress: Double?

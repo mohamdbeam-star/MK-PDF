@@ -6,10 +6,18 @@ struct MKPDFCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { UpdateChecker.shared.check(userInitiated: true) }
+        }
         CommandGroup(after: .newItem) {
             Button("Home") { openWindow(id: "home") }.keyboardShortcut("0", modifiers: [.command, .shift])
             Divider()
             Button("Combine Files…") { openWindow(id: "combine") }
+            Button("Batch Process Files…") { openWindow(id: "batch") }.keyboardShortcut("b", modifiers: [.command, .shift])
+            Button("Repair PDF…") {
+                guard let url = Panels.open([.pdf], title: "Choose a damaged PDF").first else { return }
+                DocumentLauncher.open(url: url)
+            }
             Menu("Create PDF") {
                 Button("From Images…") { Creator.fromImages() }
                 Button("From Document…") { Creator.fromDocument() }

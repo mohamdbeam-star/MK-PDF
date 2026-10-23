@@ -39,11 +39,26 @@ struct WatermarkSheet: View {
     @State private var angle = 45.0
     @State private var color = Color.red
     @State private var range = ""
+    @State private var image: NSImage?
+    @State private var useImage = false
 
     var body: some View {
         Form {
             Text("Watermark").font(.title2.bold())
-            TextField("Text", text: $text)
+            Picker("Type", selection: $useImage) {
+                Text("Text").tag(false)
+                Text("Image").tag(true)
+            }
+            .pickerStyle(.segmented)
+            if useImage {
+                HStack {
+                    if let image { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(height: 40) }
+                    Button(image == nil ? "Choose Image…" : "Change…") {
+                        image = Panels.open(Panels.imageTypes).first.flatMap(NSImage.init(contentsOf:))
+                    }
+                }
+            }
+            TextField("Text", text: $text).disabled(useImage)
             Slider(value: $size, in: 18...160) { Text("Size \(Int(size))") }
             Slider(value: $opacity, in: 0.05...1) { Text("Opacity \(Int(opacity * 100))%") }
             Slider(value: $angle, in: -90...90, step: 5) { Text("Angle \(Int(angle))°") }
@@ -52,7 +67,7 @@ struct WatermarkSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Apply") { apply() }.keyboardShortcut(.defaultAction).disabled(text.isEmpty)
+                Button("Apply") { apply() }.keyboardShortcut(.defaultAction).disabled(useImage ? image == nil : text.isEmpty)
             }
         }
         .padding(22)
@@ -67,8 +82,23 @@ struct WatermarkSheet: View {
         editor.transformPages("Add Watermark", indices: indices) { page, _ in
             PageCompositor.compose(page) { ctx in
                 let s = page.displaySize
-                PageText.draw(text, in: ctx, page: page, at: CGPoint(x: s.width / 2, y: s.height / 2), anchor: CGPoint(x: 0.5, y: 0.5),
-                              font: font, color: nsColor, angle: angle, opacity: opacity)
+                if useImage, let image {
+                    // Size slider sets the image width as a share of the page.
+                    let w = s.width * CGFloat(size) / 160, h = image.size.width > 0 ? w * image.size.height / image.size.width : w
+                    ctx.saveGState()
+                    ctx.concatenate(page.displayToPage)
+                    ctx.setAlpha(opacity)
+                    ctx.translateBy(x: s.width / 2, y: s.height / 2)
+                    ctx.rotate(by: angle * .pi / 180)
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+                    image.draw(in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h))
+                    NSGraphicsContext.restoreGraphicsState()
+                    ctx.restoreGState()
+                } else {
+                    PageText.draw(text, in: ctx, page: page, at: CGPoint(x: s.width / 2, y: s.height / 2), anchor: CGPoint(x: 0.5, y: 0.5),
+                                  font: font, color: nsColor, angle: angle, opacity: opacity)
+                }
             }
         }
         dismiss()
@@ -171,6 +201,8 @@ struct SplitSheet: View {
     @State private var every = 1
     @State private var ranges = ""
     @State private var parts = 2
+    @State private var megabytes = 5.0
+    @State private var mergeRanges = false
 
     var body: some View {
         Form {
@@ -180,10 +212,16 @@ struct SplitSheet: View {
                 Text("Page ranges").tag(1)
                 Text("Number of files").tag(2)
                 Text("Top-level bookmarks").tag(3)
+                Text("File size").tag(4)
             }
             switch mode {
             case 0: Stepper("Every \(every) page(s)", value: $every, in: 1...max(1, editor.pageCount))
-            case 1: TextField("Ranges", text: $ranges, prompt: Text("1-3; 4-8; 9-"))
+            case 1:
+                TextField("Ranges", text: $ranges, prompt: Text("1-3; 4-8; 9-"))
+                Toggle("Merge all ranges into one PDF", isOn: $mergeRanges)
+            case 4:
+                Stepper("At most \(String(format: "%.1f", megabytes)) MB per file", value: $megabytes, in: 0.5...500, step: 0.5)
+                Text("Pages are kept together; a single page larger than the limit gets its own file.").font(.caption).foregroundStyle(.secondary)
             case 2: Stepper("\(parts) files", value: $parts, in: 2...max(2, editor.pageCount))
             default: Text("One file per top-level bookmark.").foregroundStyle(.secondary)
             }
@@ -206,6 +244,8 @@ struct SplitSheet: View {
         case 2:
             let size = Int((Double(n) / Double(parts)).rounded(.up))
             return stride(from: 0, to: n, by: max(1, size)).map { Array($0..<min($0 + size, n)) }
+        case 4:
+            return sizeGroups(limit: Int(megabytes * 1_000_000))
         default:
             let starts = (0..<(editor.pdf.outlineRoot?.numberOfChildren ?? 0)).compactMap { i -> Int? in
                 guard let page = editor.pdf.outlineRoot?.child(at: i)?.destination?.page else { return nil }
@@ -217,7 +257,36 @@ struct SplitSheet: View {
         }
     }
 
+    /// Greedy grouping by each page's size on its own (shared fonts are counted per page, so files stay under the limit).
+    private func sizeGroups(limit: Int) -> [[Int]]? {
+        guard let copy = PDFExporter.copy(of: editor.pdf), let data = copy.dataRepresentation() else { return nil }
+        let sizes: [Int] = (0..<copy.pageCount).map { i in
+            guard let doc = PDFDocument(data: data) else { return 0 }
+            for j in (0..<doc.pageCount).reversed() where j != i { doc.removePage(at: j) }
+            return doc.dataRepresentation()?.count ?? 0
+        }
+        var groups: [[Int]] = []
+        var current: [Int] = []
+        var total = 0
+        for (i, size) in sizes.enumerated() {
+            if !current.isEmpty, total + size > limit {
+                groups.append(current)
+                current = []
+                total = 0
+            }
+            current.append(i)
+            total += size
+        }
+        if !current.isEmpty { groups.append(current) }
+        return groups
+    }
+
     private func split() {
+        if mode == 1 && mergeRanges {
+            guard let groups = groups(), let doc = editor.extractedDocument(groups.flatMap { $0 }) else { return Panels.alert("Check the page ranges") }
+            DocumentLauncher.open(doc)
+            return dismiss()
+        }
         guard let groups = groups(), !groups.isEmpty else { return Panels.alert("Check the split settings") }
         guard let folder = Panels.folder(title: "Choose where to save the \(groups.count) files") else { return }
         for (i, pages) in groups.enumerated() {

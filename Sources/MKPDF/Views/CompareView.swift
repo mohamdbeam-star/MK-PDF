@@ -13,6 +13,8 @@ struct CompareView: View {
     @State private var right: PDFDocument?
     @State private var changes: [Change] = []
     @State private var selected: Change.ID?
+    @State private var overlay = false
+    @State private var overlayPage = 0
 
     struct Change: Identifiable {
         let id = UUID()
@@ -34,20 +36,47 @@ struct CompareView: View {
             .overlay {
                 if changes.isEmpty && left != nil { ContentUnavailableView("No text differences", systemImage: "checkmark.circle") }
             }
-            VStack(spacing: 0) {
-                header(request.original, "Original")
-                ComparePane(document: left, highlight: selectedChange.map { ($0.page, $0.removed) })
-            }
-            VStack(spacing: 0) {
-                header(request.revised, "Revised")
-                ComparePane(document: right, highlight: selectedChange.map { ($0.page, $0.added) })
+            if overlay {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Overlay").bold()
+                        Text("Red: only in original · Blue: only in revised").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Stepper("Page \(overlayPage + 1) of \(pageCount)", value: $overlayPage, in: 0...max(pageCount - 1, 0))
+                    }
+                    .padding(8).background(.bar)
+                    ScrollView([.horizontal, .vertical]) {
+                        if let img = OverlayCompare.image(original: left?.page(at: overlayPage), revised: right?.page(at: overlayPage)) {
+                            Image(nsImage: img).padding(20)
+                        }
+                    }
+                    .background(Color(nsColor: .underPageBackgroundColor))
+                }
+            } else {
+                VStack(spacing: 0) {
+                    header(request.original, "Original")
+                    ComparePane(document: left, highlight: selectedChange.map { ($0.page, $0.removed) })
+                }
+                VStack(spacing: 0) {
+                    header(request.revised, "Revised")
+                    ComparePane(document: right, highlight: selectedChange.map { ($0.page, $0.added) })
+                }
             }
         }
+        .toolbar {
+            Picker("View", selection: $overlay) {
+                Text("Side by Side").tag(false)
+                Text("Overlay").tag(true)
+            }
+            .pickerStyle(.segmented)
+        }
+        .onChange(of: selected) { _, _ in if let c = selectedChange { overlayPage = c.page } }
         .navigationTitle("Compare: \(request.original.lastPathComponent) ↔ \(request.revised.lastPathComponent)")
         .task { load() }
     }
 
     private var selectedChange: Change? { changes.first { $0.id == selected } }
+    private var pageCount: Int { max(left?.pageCount ?? 0, right?.pageCount ?? 0) }
 
     private func header(_ url: URL, _ label: String) -> some View {
         HStack {

@@ -31,7 +31,25 @@ How it works: `Sources/MKPDFCore` parses each page's content stream and tracks t
 | Create | Blank, combine files, images to PDF, Word/RTF/HTML/text to PDF, web page to PDF, clipboard to PDF |
 | Compare | Side-by-side view with a word-level change list |
 | AI Assistant | Summaries and questions answered on-device with Apple Intelligence, with a text-search fallback when Apple Intelligence is off |
+| Batch | Run one tool on many PDFs: compress, OCR, page numbers, watermark, password, rotate, flatten, remove metadata, convert to JPG / Word / Excel / text |
+| Convert | Excel (tables become rows and columns) and PowerPoint (one slide per page), with optional OCR for scanned pages; extract embedded images (JPEGs saved unchanged) |
+| Repair | Rebuild every page of a damaged PDF through the content engine |
+| More | Split by file size or merge chosen ranges, image watermarks, place a signature or stamp on every page / all but last / a range, visual overlay compare, translate on-device, scan with iPhone (Continuity Camera), right-to-left two-page reading, arrow-key nudging, light/dark appearance, notifications when long tasks finish |
+| Updates | Checks GitHub Releases at launch and every six hours; shows a banner and a notification with *Download & Install* when a newer version is out |
 | Other | Full undo/redo, document properties, print, share |
+
+## Install
+
+Download the latest `MK-PDF-x.y.z.dmg` from [Releases](https://github.com/mohamdbeam-star/MK-PDF/releases), open it and drag **MK PDF** into Applications. The build is ad-hoc signed, so the first time, right-click the app and choose **Open**.
+
+## Release
+
+```bash
+echo 1.2.0 > VERSION      # then write RELEASE_NOTES.md and commit
+scripts/release.sh        # builds the universal DMG, tags v1.2.0 and publishes the GitHub release
+```
+
+Every installed copy picks the new release up through its update check.
 
 ## Build
 
@@ -50,6 +68,7 @@ open "MK PDF.app"
 swift run MKPDFSelfTest                    # content engine checks
 swift run MKPDFSelfTest some.pdf other.pdf # round-trip and word removal on your own files
 swift build --product MKPDF && .build/debug/MKPDF --edit-smoke-test in.pdf out.pdf
+.build/debug/MKPDF --feature-smoke-test in.pdf outdir   # Excel, PowerPoint, images, every batch tool, update logic
 ```
 
 The self-test checks the parser, the page rewriter (each rewritten page must render identically and keep identical text), glyph-exact text removal that leaves the surrounding text in place, and image move, resize and delete. The edit smoke test runs the app's editing pipeline headlessly on a file.
@@ -58,4 +77,6 @@ The self-test checks the parser, the page rewriter (each rewritten page must ren
 
 - Text inside form XObjects, and text that is rotated or vertical, can't be edited in place yet. Use *Cover and retype selected text* for those.
 - Scanned pages contain no text to edit. Run Scan & OCR first, then use cover-and-retype.
+- Certificate-based digital signatures, PDF/A conversion and Excel/PowerPoint → PDF need a commercial PDF engine and aren't included.
+- PowerPoint export places each page as a picture; text isn't editable on the slides.
 - Type0 fonts are assumed to use 2-byte codes (Identity-H, by far the most common encoding).

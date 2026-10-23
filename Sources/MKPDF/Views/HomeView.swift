@@ -16,6 +16,8 @@ struct HomeView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+        UpdateBanner()
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 12) {
@@ -45,7 +47,17 @@ struct HomeView: View {
             .padding(26)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Recent").font(.headline)
+                HStack {
+                    Text("Recent").font(.headline)
+                    Spacer()
+                    if !recents.isEmpty {
+                        Button("Clear") {
+                            NSDocumentController.shared.clearRecentDocuments(nil)
+                            recents = []
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
                 if recents.isEmpty {
                     Text("Files you open appear here.").font(.callout).foregroundStyle(.secondary)
                 }
@@ -72,7 +84,9 @@ struct HomeView: View {
             .padding(20)
             .frame(width: 280)
         }
-        .frame(width: 830, height: 470)
+        }
+        .frame(width: 830, height: 610, alignment: .top)
+        .background(ContinuityCameraHost().frame(width: 1, height: 1))
         .onAppear { recents = NSDocumentController.shared.recentDocumentURLs }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             recents = NSDocumentController.shared.recentDocumentURLs
@@ -90,6 +104,11 @@ struct HomeView: View {
             Tile(title: "Compare Files", detail: "Find differences between two PDFs", symbol: "doc.on.doc", color: .pink) { compare() },
             Tile(title: "From Clipboard", detail: "Paste an image, PDF or text", symbol: "doc.on.clipboard", color: .brown) { Creator.fromClipboard() },
             Tile(title: "Fill & Sign", detail: "Open a form to fill and sign", symbol: "signature", color: .red) { NSDocumentController.shared.openDocument(nil) },
+            Tile(title: "Batch Process", detail: "Compress, OCR or convert many files", symbol: "square.stack.3d.forward.dottedline", color: .cyan) { openWindow(id: "batch") },
+            Tile(title: "Scan with iPhone", detail: "Scan paper with your iPhone camera", symbol: "iphone.gen3.radiowaves.left.and.right", color: .mint) { ContinuityCameraView.shared?.showMenu() },
+            Tile(title: "Repair PDF", detail: "Recover a damaged file", symbol: "bandage", color: .gray) {
+                if let url = Panels.open([.pdf], title: "Choose a damaged PDF").first { DocumentLauncher.open(url: url) }
+            },
         ]
     }
 
@@ -166,6 +185,13 @@ struct SettingsView: View {
             TextField("Author name for comments", text: $authorName, prompt: Text(NSFullUserName()))
             Toggle("Add name and date to stamps", isOn: $dynamicStamps)
             LabeledContent("Saved signatures", value: "\(SignatureStore.shared.items.count)")
+            Picker("Appearance", selection: Binding(get: { Appearance.current }, set: { Appearance.apply($0) })) {
+                ForEach(Appearance.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Toggle("Check for updates automatically", isOn: Binding(get: { UpdateChecker.shared.automatic },
+                                                                   set: { UpdateChecker.shared.automatic = $0 }))
+            LabeledContent("Version", value: UpdateChecker.currentVersion)
+            Button("Check for Updates Now") { UpdateChecker.shared.check(userInitiated: true) }
         }
         .padding(20)
         .frame(width: 420)

@@ -164,6 +164,14 @@ struct AnnotationInspector: View {
                 Text("\(author)\(annotation.modificationDate.map { " · " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "")")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if annotation is ImageStampAnnotation || annotation.type == "FreeText" {
+                Menu {
+                    ForEach(EditorModel.PlacementPages.allCases) { option in
+                        Button(option.rawValue) { editor.place(annotation, on: option) }
+                    }
+                } label: { Label("Place on Other Pages", systemImage: "doc.on.doc") }
+                .help("Copy this to the same position on other pages")
+            }
             if !(annotation is ImageStampAnnotation) && annotation.type != "Widget" {
                 Text(annotation.type == "FreeText" ? "Text" : "Comment").font(.caption.bold())
                 TextEditor(text: Binding(

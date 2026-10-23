@@ -4,7 +4,7 @@ import Quartz
 import UniformTypeIdentifiers
 
 enum ExportFormat {
-    case word, rtf, text, html, csv, png, jpeg, tiff, flattened, grayscale, pdfx
+    case word, rtf, text, html, csv, excel, powerpoint, png, jpeg, tiff, flattened, grayscale, pdfx
 }
 
 extension EditorModel {
@@ -29,6 +29,8 @@ extension EditorModel {
             guard let url = Panels.save(name: "\(name).txt", type: .plainText) else { return }
             let text = pdf.pages.map { $0.string ?? "" }.joined(separator: "\n\n\u{0C}")
             try? text.write(to: url, atomically: true, encoding: .utf8)
+        case .excel, .powerpoint:
+            exportOffice(format, ocr: false)
         case .csv:
             guard let url = Panels.save(name: "\(name).csv", type: .commaSeparatedText) else { return }
             try? TableExtractor.csv(from: pdf).write(to: url, atomically: true, encoding: .utf8)

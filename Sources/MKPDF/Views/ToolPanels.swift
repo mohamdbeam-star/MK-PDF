@@ -435,10 +435,15 @@ struct CompressPanel: View {
 struct ExportPanel: View {
     @ObservedObject var editor: EditorModel
     @State private var dpi = 150.0
+    @State private var ocr = true
 
     var body: some View {
+        SectionTitle("Office")
+        Toggle("Recognize text in scanned pages (OCR)", isOn: $ocr).font(.callout)
+        ActionRow(title: "Microsoft Word (.docx)", symbol: "doc.richtext") { editor.exportOffice(.word, ocr: ocr) }
+        ActionRow(title: "Microsoft Excel (.xlsx)", symbol: "tablecells", detail: "Tables become rows and columns, one sheet per page") { editor.exportOffice(.excel, ocr: ocr) }
+        ActionRow(title: "Microsoft PowerPoint (.pptx)", symbol: "rectangle.on.rectangle", detail: "One slide per page") { editor.exportOffice(.powerpoint, ocr: false) }
         SectionTitle("Documents")
-        ActionRow(title: "Microsoft Word (.docx)", symbol: "doc.richtext") { editor.export(.word) }
         ActionRow(title: "Rich Text (.rtf)", symbol: "doc.text") { editor.export(.rtf) }
         ActionRow(title: "Plain Text (.txt)", symbol: "text.alignleft") { editor.export(.text) }
         ActionRow(title: "Web Page (.html)", symbol: "globe") { editor.export(.html) }
@@ -452,6 +457,7 @@ struct ExportPanel: View {
         ActionRow(title: "PNG images", symbol: "photo") { editor.export(.png, dpi: dpi) }
         ActionRow(title: "JPEG images", symbol: "photo.fill") { editor.export(.jpeg, dpi: dpi) }
         ActionRow(title: "TIFF images", symbol: "photo.stack") { editor.export(.tiff, dpi: dpi) }
+        ActionRow(title: "Extract embedded images", symbol: "photo.on.rectangle.angled", detail: "Original JPEGs are saved unchanged") { editor.extractAllImages() }
         SectionTitle("PDF")
         ActionRow(title: "Selected pages as PDF…", symbol: "doc.on.doc") { editor.extractPages() }
         ActionRow(title: "Flattened PDF (print-ready)", symbol: "printer", detail: "Annotations and forms merged into pages") { editor.export(.flattened) }
@@ -478,6 +484,9 @@ struct MorePanel: View {
             openWindow(id: "compare", value: CompareRequest(original: mine, revised: other))
         }
         ActionRow(title: "Combine files…", symbol: "rectangle.stack.badge.plus") { openWindow(id: "combine") }
+        ActionRow(title: "Batch process files…", symbol: "square.stack.3d.forward.dottedline", detail: "One tool on many PDFs") { openWindow(id: "batch") }
+        ActionRow(title: "Repair PDF", symbol: "bandage", detail: "Rebuild damaged pages") { editor.repairDocument() }
+        ActionRow(title: "Remove all images", symbol: "photo.badge.minus") { editor.removeAllImages() }
         ActionRow(title: "Print…", symbol: "printer") { editor.printDocument() }
         Toggle("Night reading mode", isOn: $editor.nightMode)
         ActionRow(title: "Read mode (full screen)", symbol: "arrow.up.left.and.arrow.down.right") { editor.enterReadMode() }

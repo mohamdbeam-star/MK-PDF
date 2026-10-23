@@ -18,6 +18,8 @@ struct DocumentWindow: View {
             SidebarView(editor: editor, document: document)
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 340)
         } detail: {
+            VStack(spacing: 0) {
+            UpdateBanner()
             ZStack {
                 if document.pdf.isLocked {
                     UnlockView(editor: editor)
@@ -27,6 +29,7 @@ struct DocumentWindow: View {
                     PDFKitView(editor: editor, document: document)
                 }
                 if let busy = editor.busy { BusyOverlay(title: busy, progress: editor.progress) }
+            }
             }
             .frame(minWidth: 420, minHeight: 400)
             .inspector(isPresented: $editor.showInspector) {
@@ -137,6 +140,7 @@ struct MainToolbar: ToolbarContent {
                     Text("Two Pages").tag(PDFDisplayMode.twoUp)
                     Text("Two Pages Continuous").tag(PDFDisplayMode.twoUpContinuous)
                 }
+                Toggle("Right-to-Left Reading", isOn: $editor.rightToLeft)
             } label: {
                 Text("\(editor.scalePercent)%").monospacedDigit().frame(minWidth: 44)
             } primaryAction: {

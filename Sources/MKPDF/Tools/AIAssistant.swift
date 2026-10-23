@@ -114,6 +114,7 @@ struct AIPanel: View {
         TextField("e.g. What is the total amount?", text: $question).textFieldStyle(.roundedBorder)
             .onSubmit { Task { await ask() } }
         if working { ProgressView().controlSize(.small) }
+        TranslatePanel(editor: editor)
         ForEach(Array(history.enumerated().reversed()), id: \.offset) { _, item in
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.q).font(.callout.bold())

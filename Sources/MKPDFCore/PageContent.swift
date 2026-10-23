@@ -309,6 +309,27 @@ public final class PageContent {
         analyze()
     }
 
+    /// The original bytes of a placed image when they are a JPEG (saved as-is, no quality loss), plus its pixel size.
+    public func imageInfo(for object: GraphicObject) -> (jpeg: Data?, width: Int, height: Int)? {
+        guard object.kind == .image, let (stream, _) = xobject(object.name), let d = CGPDFStreamGetDictionary(stream) else { return nil }
+        var w: CGPDFInteger = 0, h: CGPDFInteger = 0
+        CGPDFDictionaryGetInteger(d, "Width", &w)
+        CGPDFDictionaryGetInteger(d, "Height", &h)
+        var format = CGPDFDataFormat.raw
+        let data = CGPDFStreamCopyData(stream, &format) as Data?
+        return (format == .jpegEncoded ? data : nil, Int(w), Int(h))
+    }
+
+    /// A one-page PDF that draws only `object`, for rendering it on its own.
+    public func isolatedPDF(for object: GraphicObject) -> Data? {
+        guard object.opIndex < operations.count else { return nil }
+        let m = object.ctm
+        let ops = [ContentOperation("q"), ContentOperation("cm", [m.a, m.b, m.c, m.d, m.tx, m.ty].map { .number(Double($0)) }),
+                   operations[object.opIndex], ContentOperation("Q")]
+        // Inline images carry their own placement relative to the CTM; forms and images are unit-square based.
+        return PDFWriter.page(from: page, content: ContentStream.serialize(ops))
+    }
+
     /// The embedded font program for a font resource, when Core Text can load it (TrueType or OpenType).
     public func fontProgram(for resource: String) -> Data? {
         guard let resources else { return nil }
