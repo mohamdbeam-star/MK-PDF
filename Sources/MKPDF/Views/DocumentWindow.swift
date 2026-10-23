@@ -41,6 +41,7 @@ struct DocumentWindow: View {
         .searchable(text: $editor.searchText, placement: .toolbar, prompt: "Find in document")
         .onSubmit(of: .search) { editor.runSearch() }
         .focusedSceneObject(editor)
+        .background(TabbingHost())
         .sheet(item: $editor.sheet) { sheet in
             SheetHost(sheet: sheet, editor: editor, document: document)
         }
@@ -69,7 +70,7 @@ struct BusyOverlay: View {
                 Text(title).font(.headline)
             }
             .padding(24)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .glassSurface(20)
         }
     }
 }
@@ -197,4 +198,43 @@ struct SheetHost: View {
         case .unlock: EmptyView()
         }
     }
+}
+
+/// Puts every document window into one window as tabs, like browser tabs.
+struct TabbingHost: NSViewRepresentable {
+    static let identifier = "MKPDFDocuments"
+
+    final class HostView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.tabbingMode = .preferred
+            window.tabbingIdentifier = TabbingHost.identifier
+            // Join an existing document window instead of opening a separate one.
+            DispatchQueue.main.async {
+                guard window.tabbedWindows == nil || window.tabbedWindows?.count == 1 else { return }
+                let others = NSApp.windows.filter {
+                    $0 !== window && $0.isVisible && $0.tabbingIdentifier == TabbingHost.identifier
+                }
+                guard let host = others.first(where: { $0.isKeyWindow || $0.isMainWindow }) ?? others.first else { return }
+                host.addTabbedWindow(window, ordered: .above)
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> HostView { HostView() }
+    func updateNSView(_ nsView: HostView, context: Context) {}
+}
+
+/// Keeps tool windows (Home, Batch, Combine, Compare) out of the document tabs.
+struct NoTabbingHost: NSViewRepresentable {
+    final class HostView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.tabbingMode = .disallowed
+        }
+    }
+    func makeNSView(context: Context) -> HostView { HostView() }
+    func updateNSView(_ nsView: HostView, context: Context) {}
 }

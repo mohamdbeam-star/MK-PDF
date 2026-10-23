@@ -21,7 +21,7 @@ struct CommentPanel: View {
                         .resizable().aspectRatio(contentMode: .fit).frame(height: 26)
                         .frame(maxWidth: .infinity)
                         .padding(4)
-                        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .glassSurface(8, interactive: true)
                 }
                 .buttonStyle(.plain)
             }
@@ -69,7 +69,7 @@ struct FillSignPanel: View {
                     Text(item.kind).font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(8)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .glassSurface(10, interactive: true)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -100,7 +100,7 @@ struct EditPanel: View {
             Label(editor.tool == .editContent ? "Done Editing" : "Edit Text & Images", systemImage: "character.cursor.ibeam")
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .glassButton(prominent: true)
         .controlSize(.large)
         if editor.tool == .editContent {
             Text("Click a paragraph to change its text. Drag a paragraph or image to move it; drag an image's corner to resize; press Delete to remove it. Double-click empty space to add text.")
@@ -436,33 +436,49 @@ struct ExportPanel: View {
     @ObservedObject var editor: EditorModel
     @State private var dpi = 150.0
     @State private var ocr = true
+    @State private var quality = 0.9
 
     var body: some View {
-        SectionTitle("Office")
+        Text("Layout, fonts, colours, tables and images are rebuilt from the page, so files open looking like the PDF.")
+            .font(.caption).foregroundStyle(.secondary)
         Toggle("Recognize text in scanned pages (OCR)", isOn: $ocr).font(.callout)
-        ActionRow(title: "Microsoft Word (.docx)", symbol: "doc.richtext") { editor.exportOffice(.word, ocr: ocr) }
-        ActionRow(title: "Microsoft Excel (.xlsx)", symbol: "tablecells", detail: "Tables become rows and columns, one sheet per page") { editor.exportOffice(.excel, ocr: ocr) }
-        ActionRow(title: "Microsoft PowerPoint (.pptx)", symbol: "rectangle.on.rectangle", detail: "One slide per page") { editor.exportOffice(.powerpoint, ocr: false) }
-        SectionTitle("Documents")
-        ActionRow(title: "Rich Text (.rtf)", symbol: "doc.text") { editor.export(.rtf) }
-        ActionRow(title: "Plain Text (.txt)", symbol: "text.alignleft") { editor.export(.text) }
-        ActionRow(title: "Web Page (.html)", symbol: "globe") { editor.export(.html) }
-        ActionRow(title: "Spreadsheet (.csv)", symbol: "tablecells", detail: "Text laid out in columns") { editor.export(.csv) }
+        SectionTitle("Office")
+        ActionRow(title: "Word (.docx)", symbol: "doc.richtext", detail: "Editable paragraphs, tables and images") { editor.exportOffice(.word, ocr: ocr) }
+        ActionRow(title: "Excel (.xlsx)", symbol: "tablecells", detail: "Tables keep their columns; one sheet per page") { editor.exportOffice(.excel, ocr: ocr) }
+        ActionRow(title: "PowerPoint (.pptx)", symbol: "rectangle.on.rectangle", detail: "Editable text over each page's artwork") { editor.exportOffice(.powerpoint, ocr: false) }
+        ActionRow(title: "Word 97 (.doc)", symbol: "doc") { editor.exportOffice(.word97, ocr: ocr) }
+        ActionRow(title: "OpenDocument (.odt)", symbol: "doc.text") { editor.exportOffice(.odt, ocr: ocr) }
+        SectionTitle("Text & web")
+        ActionRow(title: "Web page (.html)", symbol: "globe", detail: "One file, exact layout, selectable text") { editor.exportOffice(.html, ocr: false) }
+        ActionRow(title: "Rich Text (.rtf)", symbol: "doc.plaintext") { editor.exportOffice(.rtf, ocr: ocr) }
+        ActionRow(title: "Markdown (.md)", symbol: "number", detail: "Headings, bold, lists and tables") { editor.exportOffice(.markdown, ocr: ocr) }
+        ActionRow(title: "Plain text (.txt)", symbol: "text.alignleft") { editor.exportOffice(.text, ocr: ocr) }
+        ActionRow(title: "CSV (.csv)", symbol: "tablecells.badge.ellipsis") { editor.exportOffice(.csv, ocr: ocr) }
         SectionTitle("Images")
         Picker("Resolution", selection: $dpi) {
             Text("72 dpi").tag(72.0)
             Text("150 dpi").tag(150.0)
             Text("300 dpi").tag(300.0)
+            Text("600 dpi").tag(600.0)
         }
-        ActionRow(title: "PNG images", symbol: "photo") { editor.export(.png, dpi: dpi) }
-        ActionRow(title: "JPEG images", symbol: "photo.fill") { editor.export(.jpeg, dpi: dpi) }
-        ActionRow(title: "TIFF images", symbol: "photo.stack") { editor.export(.tiff, dpi: dpi) }
+        HStack {
+            Text("Quality").font(.callout)
+            Slider(value: $quality, in: 0.3...1)
+            Text("\(Int(quality * 100))%").monospacedDigit().font(.callout)
+        }
+        .onChange(of: quality) { _, q in editor.imageQuality = q }
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+            ForEach([ExportFormat.png, .jpeg, .heic, .webp, .tiff, .bmp, .gif], id: \.fileExtension) { f in
+                Button(f.fileExtension.uppercased()) { editor.export(f, dpi: dpi) }.frame(maxWidth: .infinity)
+            }
+        }
         ActionRow(title: "Extract embedded images", symbol: "photo.on.rectangle.angled", detail: "Original JPEGs are saved unchanged") { editor.extractAllImages() }
         SectionTitle("PDF")
         ActionRow(title: "Selected pages as PDF…", symbol: "doc.on.doc") { editor.extractPages() }
         ActionRow(title: "Flattened PDF (print-ready)", symbol: "printer", detail: "Annotations and forms merged into pages") { editor.export(.flattened) }
         ActionRow(title: "Grayscale PDF", symbol: "circle.lefthalf.filled") { editor.export(.grayscale) }
         ActionRow(title: "PDF/X-3 for print", symbol: "printer.filled.and.paper") { editor.export(.pdfx) }
+            .onAppear { quality = Double(editor.imageQuality) }
     }
 }
 

@@ -20,6 +20,8 @@ public struct Glyph {
     public let fontResource: String
     /// Fill colour the glyph was painted with, when it's a plain gray, RGB or CMYK colour.
     public let color: CGColor?
+    /// Drawn with an invisible text render mode (typically an OCR text layer over a scan).
+    public let invisible: Bool
 }
 
 public struct TextShow {
@@ -173,6 +175,8 @@ public final class PageContent {
     public private(set) var operations: [ContentOperation]
     public private(set) var shows: [TextShow] = []
     public private(set) var objects: [GraphicObject] = []
+    /// Thin painted lines and bars (table rules, underlines), page space.
+    public private(set) var rules: [CGRect] = []
     /// Text drawn inside form XObjects can't be edited here; their bounds are listed so callers can tell.
     public var formBounds: [CGRect] { objects.filter { $0.kind == .form }.map(\.bounds) }
 
@@ -370,6 +374,7 @@ public final class PageContent {
         var fontSize = 0.0
         var rise = 0.0
         var fill: CGColor? = CGColor(gray: 0, alpha: 1)
+        var renderMode = 0
     }
 
     private func font(_ name: String) -> FontMetrics? {
@@ -398,6 +403,17 @@ public final class PageContent {
     private func analyze() {
         shows = []
         objects = []
+        rules = []
+        var subpaths: [CGRect] = []
+        var current = CGRect.null
+        func addPoint(_ x: Double, _ y: Double, _ ctm: CGAffineTransform) {
+            let p = CGPoint(x: x, y: y).applying(ctm)
+            current = current.isNull ? CGRect(origin: p, size: .zero) : current.union(CGRect(origin: p, size: .zero))
+        }
+        func closeSubpath() {
+            if !current.isNull { subpaths.append(current) }
+            current = .null
+        }
         var gs = GState()
         var stack: [GState] = []
         var tm = CGAffineTransform.identity
@@ -430,7 +446,8 @@ public final class PageContent {
                         let upright = abs(toUser.b) < 0.001 && abs(toUser.c) < 0.001 && toUser.a > 0 && toUser.d > 0
                         glyphs.append(Glyph(element: index, bytes: Data(bytes[k..<(k + n)]), rect: local.applying(toUser), displacement: tx,
                                             origin: CGPoint(x: 0, y: gs.rise).applying(toUser), size: fs * Double(hypot(toUser.c, toUser.d)),
-                                            upright: upright, fontResource: gs.fontName, color: gs.fill))
+                                            upright: upright, fontResource: gs.fontName, color: gs.fill,
+                                            invisible: gs.renderMode == 3 || gs.renderMode == 7))
                         tm = CGAffineTransform(translationX: tx, y: 0).concatenating(tm)
                         k += n
                     }
@@ -476,6 +493,7 @@ public final class PageContent {
             case "Tz": gs.hScale = (nums(op).first ?? 100) / 100
             case "TL": gs.leading = nums(op).first ?? 0
             case "Ts": gs.rise = nums(op).first ?? 0
+            case "Tr": gs.renderMode = Int(nums(op).first ?? 0)
             case "Tf":
                 if let name = op.operands.first?.nameValue { gs.fontName = name }
                 gs.fontSize = nums(op).last ?? gs.fontSize
@@ -521,6 +539,24 @@ public final class PageContent {
                     objects.append(GraphicObject(kind: .form, opIndex: index, name: name, ctm: gs.ctm,
                                                  bounds: bbox.applying(matrix.concatenating(gs.ctm))))
                 }
+            case "m":
+                closeSubpath()
+                let n = nums(op)
+                if n.count >= 2 { addPoint(n[0], n[1], gs.ctm) }
+            case "l":
+                let n = nums(op)
+                if n.count >= 2 { addPoint(n[0], n[1], gs.ctm) }
+            case "re":
+                closeSubpath()
+                let n = nums(op)
+                if n.count == 4 { addPoint(n[0], n[1], gs.ctm); addPoint(n[0] + n[2], n[1] + n[3], gs.ctm); closeSubpath() }
+            case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*":
+                closeSubpath()
+                for r in subpaths where (r.width < 2.5 && r.height > 4) || (r.height < 2.5 && r.width > 4) { rules.append(r) }
+                subpaths = []
+            case "n":
+                current = .null
+                subpaths = []
             case "BI":
                 objects.append(GraphicObject(kind: .inlineImage, opIndex: index, name: "inline", ctm: gs.ctm,
                                              bounds: CGRect(x: 0, y: 0, width: 1, height: 1).applying(gs.ctm)))

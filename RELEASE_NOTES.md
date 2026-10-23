@@ -1,32 +1,20 @@
-## What's new in MK PDF 1.1.0
+## What's new in MK PDF 1.2.0
 
-**Convert**
-- PDF → Excel: tables are rebuilt into rows and columns, one sheet per page
-- PDF → PowerPoint: one slide per page
-- Optional OCR when converting scanned pages to Word or Excel
-- Extract every embedded image (original JPEGs saved unchanged) or remove all images
+**Tabs**
+- Open several PDFs and they appear as tabs in one window, like a browser. Drag a tab out to make a separate window, or use Window ▸ Merge All Windows.
 
-**Batch processing**
-- Run one tool on many PDFs at once: compress, OCR, page numbers, watermark, password, rotate, flatten, remove metadata, or convert to JPG, Word, Excel or text
-- A notification tells you when a long task finishes
+**Much more accurate exports**
+- Every export is rebuilt from the page's real layout: paragraphs, fonts, sizes, colours, bold/italic, alignment, right-to-left text, tables and images
+- **Word (.docx):** editable, reflowing paragraphs with the original fonts and spacing; real tables (borders only where the PDF has them); images placed where they were
+- **PowerPoint (.pptx):** each page's artwork as the slide background with every line as an editable text box
+- **HTML:** one self-contained file that looks exactly like the PDF, with selectable text
+- **Excel (.xlsx):** tables keep their columns, numbers become numbers, bold stays bold, column widths follow the PDF
+- New formats: Word 97 (.doc), OpenDocument (.odt), Markdown (.md, with headings, lists and tables), HEIC, WebP, BMP and GIF images, plus a quality setting for JPEG/HEIC/WebP
+- Scanned pages: optional OCR before converting to Office formats
 
-**Pages & signing**
-- Split by file size, or merge chosen page ranges into one PDF
-- Image watermarks
-- Place a signature or stamp on every page, every page except the last, the last page only, or a range
-- Repair damaged PDFs
-
-**Reading & review**
-- Visual overlay compare (red = only in original, blue = only in revised)
-- On-device translation of the whole document
-- Scan paper straight into a PDF with your iPhone or iPad
-- Right-to-left two-page reading, light/dark appearance setting, clear recent files
-- Nudge selected items with the arrow keys (Shift for 10 pt)
+**New look**
+- New app icon
+- Liquid Glass design on macOS 26: glass tool panels, tiles, banners and floating bars
 
 **Updates**
-- MK PDF now checks for new versions and shows a banner and a notification with **Download & Install**
-
-**Fixes**
-- Inline text editor no longer closes on stray clicks; redaction marks survive saving; no Open panel at launch; larger default windows
-
-Install: open the DMG and drag MK PDF into Applications. First launch: right-click the app and choose Open.
+- The update check now picks the newest release that has a Mac installer

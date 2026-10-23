@@ -73,6 +73,7 @@ struct CompareView: View {
         .onChange(of: selected) { _, _ in if let c = selectedChange { overlayPage = c.page } }
         .navigationTitle("Compare: \(request.original.lastPathComponent) ↔ \(request.revised.lastPathComponent)")
         .task { load() }
+        .background(NoTabbingHost())
     }
 
     private var selectedChange: Change? { changes.first { $0.id == selected } }

@@ -259,7 +259,7 @@ enum OfficeExport {
         return zip.data()
     }
 
-    private static let theme = """
+    static let theme = """
     <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="MK PDF"><a:themeElements>
     <a:clrScheme name="MK PDF"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>

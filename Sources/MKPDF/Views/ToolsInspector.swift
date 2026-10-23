@@ -18,7 +18,7 @@ struct ToolsInspector: View {
                             Text(panel.title).font(.system(size: 9.5)).lineLimit(1).minimumScaleFactor(0.8)
                         }
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(editor.panel == panel ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                        .glassSurface(10, tint: editor.panel == panel ? Color.accentColor.opacity(0.45) : nil, interactive: true)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -26,6 +26,7 @@ struct ToolsInspector: View {
                 }
             }
             .padding(8)
+            .glassGroup(spacing: 4)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -33,7 +34,7 @@ struct ToolsInspector: View {
                     if let a = editor.selectedAnnotation, editor.panel != .forms {
                         AnnotationInspector(editor: editor, annotation: a, revision: document.revision)
                             .padding(10)
-                            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                            .glassSurface(12, tint: Color.accentColor.opacity(0.12))
                     }
                     Text(editor.panel.title).font(.title3.bold())
                     switch editor.panel {
@@ -73,8 +74,7 @@ struct ToolGrid: View {
                         Text(tool.title).font(.caption2).lineLimit(1).minimumScaleFactor(0.75)
                     }
                     .frame(maxWidth: .infinity, minHeight: 46)
-                    .background(editor.tool == tool ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.08),
-                                in: RoundedRectangle(cornerRadius: 8))
+                    .glassSurface(10, tint: editor.tool == tool ? Color.accentColor.opacity(0.5) : nil, interactive: true)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -102,7 +102,7 @@ struct ActionRow: View {
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 8)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .glassSurface(10, interactive: true)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

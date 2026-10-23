@@ -92,6 +92,7 @@ struct BatchView: View {
             }
         }
         .padding(20)
+        .background(NoTabbingHost())
     }
 
     private func start() {
@@ -194,13 +195,10 @@ struct BatchJob {
                     }
                 }
             }
-        case .word:
-            let text = editor.attributedText()
-            try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
-                .write(to: base.appendingPathExtension("docx"))
-        case .excel:
-            let data = await background { OfficeExport.xlsx(pdf) }
-            try data.write(to: base.appendingPathExtension("xlsx"))
+        case .word, .excel:
+            let format: ExportFormat = operation == .word ? .word : .excel
+            let data = try await background { try format.render(pdf, title: url.lastPathComponent) }
+            try data.write(to: base.appendingPathExtension(format.fileExtension))
         case .text:
             try pdf.pages.map { $0.string ?? "" }.joined(separator: "\n\n\u{0C}").write(to: base.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
         }

@@ -56,8 +56,14 @@ extension EditSmokeTest {
         try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         guard let doc = PDFDocument(url: input) else { print("can't open"); exit(1) }
         for row in doc.page(at: 0).map(ContentEditor.table(on:)) ?? [] { print("row:", row) }
-        try? OfficeExport.xlsx(doc).write(to: out.appendingPathComponent("out.xlsx"))
-        try? OfficeExport.pptx(doc).write(to: out.appendingPathComponent("out.pptx"))
+        for f in [ExportFormat.word, .word97, .odt, .rtf, .text, .markdown, .html, .csv, .excel, .powerpoint] {
+            let start = Date()
+            do {
+                let data = try f.render(doc, title: input.lastPathComponent)
+                try data.write(to: out.appendingPathComponent("out.\(f.fileExtension)"))
+                print(String(format: "export %@ %d bytes %.2fs", f.fileExtension, data.count, Date().timeIntervalSince(start)))
+            } catch { print("export \(f.fileExtension) failed: \(error)") }
+        }
         print("images:", (try? ImageExtractor.extract(doc, to: out, name: "img")) ?? -1)
         let batchDir = out.appendingPathComponent("batch")
         try? FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)

@@ -166,27 +166,11 @@ extension EditorModel {
 
     func exportOffice(_ format: ExportFormat, ocr: Bool) {
         let name = documentName
-        let (ext, type): (String, UTType) = {
-            switch format {
-            case .excel: return ("xlsx", UTType("org.openxmlformats.spreadsheetml.sheet") ?? .data)
-            case .powerpoint: return ("pptx", UTType("org.openxmlformats.presentationml.presentation") ?? .data)
-            default: return ("docx", UTType("org.openxmlformats.wordprocessingml.document") ?? .data)
-            }
-        }()
-        guard let url = Panels.save(name: "\(name).\(ext)", type: type) else { return }
-        withSearchableCopy(ocr: ocr && format != .powerpoint) { doc in
+        let ext = format.fileExtension
+        guard let url = Panels.save(name: "\(name).\(ext)", type: format.type) else { return }
+        withSearchableCopy(ocr: ocr && format != .powerpoint && format != .html) { doc in
             self.run("Converting…") { progress -> Data in
-                switch format {
-                case .excel: return OfficeExport.xlsx(doc)
-                case .powerpoint: return OfficeExport.pptx(doc, progress: progress)
-                default:
-                    let text = NSMutableAttributedString()
-                    for (i, page) in doc.pages.enumerated() {
-                        if i > 0 { text.append(NSAttributedString(string: "\u{0C}")) }
-                        if let a = page.attributedString { text.append(a) }
-                    }
-                    return try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
-                }
+                try format.render(doc, title: name, progress: progress)
             } then: { data in
                 do {
                     try data.write(to: url)

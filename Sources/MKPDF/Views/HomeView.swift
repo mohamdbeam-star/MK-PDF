@@ -37,12 +37,13 @@ struct HomeView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
-                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                            .glassSurface(16, interactive: true)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .glassGroup(spacing: 12)
             }
             .padding(26)
             Divider()
@@ -86,7 +87,9 @@ struct HomeView: View {
         }
         }
         .frame(width: 830, height: 610, alignment: .top)
+        .background(BrandBackdrop())
         .background(ContinuityCameraHost().frame(width: 1, height: 1))
+        .background(NoTabbingHost())
         .onAppear { recents = NSDocumentController.shared.recentDocumentURLs }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             recents = NSDocumentController.shared.recentDocumentURLs
@@ -121,9 +124,7 @@ struct HomeView: View {
 
 struct AppMark: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(LinearGradient(colors: [Color(red: 0.86, green: 0.12, blue: 0.2), Color(red: 0.55, green: 0.05, blue: 0.35)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            .overlay(Text("MK").font(.system(size: 16, weight: .heavy)).foregroundStyle(.white))
+        Image(nsImage: NSApp.applicationIconImage).resizable().aspectRatio(contentMode: .fit)
     }
 }
 
@@ -173,6 +174,7 @@ struct CombineView: View {
             }
         }
         .padding(20)
+        .background(NoTabbingHost())
     }
 }
 

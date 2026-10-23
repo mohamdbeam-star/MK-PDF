@@ -38,7 +38,10 @@ struct OrganizeView: View {
             .buttonStyle(.borderless)
             .fixedSize(horizontal: false, vertical: true)
             .disabled(editor.busy != nil)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .glassCapsule()
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
             ScrollView {

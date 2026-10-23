@@ -17,6 +17,7 @@ How it works: `Sources/MKPDFCore` parses each page's content stream and tracks t
 
 | Area | Features |
 | --- | --- |
+| Tabs | Opening several PDFs puts them in one window as tabs |
 | View | Continuous / single / two-page layouts, zoom & fit, page thumbnails, bookmarks, search with results list, night mode, read mode, read aloud |
 | Comment | Highlight, underline, strikethrough, sticky notes, text boxes, freehand drawing, rectangles, ovals, lines, arrows, 12 stamps (optionally with name and date), comment list, comment summary export, flatten |
 | Fill & Sign | Fill form fields, add text / ✓ / ✗ / ● / date anywhere, draw, type or import signatures and initials (saved for reuse), finalize |
@@ -27,7 +28,7 @@ How it works: `Sources/MKPDFCore` parses each page's content stream and tracks t
 | Protect | Password to open, permission restrictions (print, copy, edit, comment, forms) |
 | Scan & OCR | On-device text recognition (Vision) adds an invisible text layer so scans become searchable and selectable |
 | Compress | Four presets, from re-encoding images only up to fully flattening pages to images, with a before/after size check |
-| Export | Word (.docx), RTF, plain text, HTML, CSV, PNG / JPEG / TIFF pages, flattened, grayscale and PDF/X-3 |
+| Export | Rebuilt from each page's layout (paragraphs, fonts, colours, alignment, RTL, tables, images): Word (.docx/.doc), PowerPoint (editable text over the page artwork), Excel, HTML (exact layout, selectable text), RTF, OpenDocument, Markdown, text, CSV; PNG / JPEG / HEIC / WebP / TIFF / BMP / GIF pages; flattened, grayscale and PDF/X-3 |
 | Create | Blank, combine files, images to PDF, Word/RTF/HTML/text to PDF, web page to PDF, clipboard to PDF |
 | Compare | Side-by-side view with a word-level change list |
 | AI Assistant | Summaries and questions answered on-device with Apple Intelligence, with a text-search fallback when Apple Intelligence is off |

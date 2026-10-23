@@ -69,11 +69,12 @@ final class UpdateChecker: ObservableObject {
     func check(userInitiated: Bool) {
         guard !checking else { return }
         checking = true
-        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repository)/releases/latest")!)
+        // Recent releases, so a release that doesn't carry a Mac disk image can't hide one that does.
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repository)/releases?per_page=15")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("MK-PDF/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { data, response, error in
-            let release = data.flatMap(Self.parse)
+            let release = data.flatMap(Self.newest)
             DispatchQueue.main.async {
                 self.checking = false
                 guard let release else {
@@ -155,6 +156,15 @@ final class UpdateChecker: ObservableObject {
         task.resume()
     }
 
+    /// The highest-versioned published release that has a .dmg.
+    static func newest(_ data: Data) -> Release? {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return parse(data) }
+        return list.filter { ($0["draft"] as? Bool) != true && ($0["prerelease"] as? Bool) != true }
+            .compactMap { (try? JSONSerialization.data(withJSONObject: $0)).flatMap(parse) }
+            .filter { $0.dmg != nil }
+            .max { isNewer($1.version, than: $0.version) }
+    }
+
     static func parse(_ data: Data) -> Release? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String,
@@ -195,9 +205,11 @@ struct UpdateBanner: View {
                     Button { updates.skip() } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Skip this version")
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(Color.accentColor.opacity(0.1))
+            .glassCapsule(tint: Color.accentColor.opacity(0.18))
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
         }
     }
 }

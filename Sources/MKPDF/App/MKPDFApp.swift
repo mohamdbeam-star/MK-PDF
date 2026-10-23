@@ -46,6 +46,7 @@ struct MKPDFApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
         Appearance.apply()
         UNUserNotificationCenter.current().delegate = self
         Notifier.requestPermission()

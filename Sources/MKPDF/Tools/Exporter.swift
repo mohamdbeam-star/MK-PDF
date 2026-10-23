@@ -4,46 +4,98 @@ import Quartz
 import UniformTypeIdentifiers
 
 enum ExportFormat {
-    case word, rtf, text, html, csv, excel, powerpoint, png, jpeg, tiff, flattened, grayscale, pdfx
+    case word, word97, odt, rtf, text, markdown, html, csv, excel, powerpoint
+    case png, jpeg, tiff, heic, webp, bmp, gif
+    case flattened, grayscale, pdfx
+
+    var fileExtension: String {
+        switch self {
+        case .word: return "docx"
+        case .word97: return "doc"
+        case .odt: return "odt"
+        case .rtf: return "rtf"
+        case .text: return "txt"
+        case .markdown: return "md"
+        case .html: return "html"
+        case .csv: return "csv"
+        case .excel: return "xlsx"
+        case .powerpoint: return "pptx"
+        case .png: return "png"
+        case .jpeg: return "jpg"
+        case .tiff: return "tiff"
+        case .heic: return "heic"
+        case .webp: return "webp"
+        case .bmp: return "bmp"
+        case .gif: return "gif"
+        default: return "pdf"
+        }
+    }
+
+    var type: UTType {
+        UTType(filenameExtension: fileExtension) ?? .data
+    }
+
+    var isImage: Bool { [.png, .jpeg, .tiff, .heic, .webp, .bmp, .gif].contains(self) }
+
+    /// Document formats, written from the recovered page layout.
+    func render(_ doc: PDFDocument, title: String, progress: (Double) -> Void = { _ in }) throws -> Data {
+        let layouts = LayoutExtractor.layout(doc, includeImages: [.word, .markdown].contains(self))
+        progress(0.5)
+        switch self {
+        case .word: return DocxWriter.data(layouts)
+        case .powerpoint: return PptxWriter.data(layouts, progress: { progress(0.5 + $0 / 2) })
+        case .html: return HtmlWriter.data(layouts, title: title)
+        case .excel: return XlsxWriter.data(layouts)
+        case .text: return Data(TextWriters.plainText(layouts).utf8)
+        case .markdown: return Data(TextWriters.markdown(layouts).utf8)
+        case .csv:
+            let rows = layouts.flatMap { l in l.items.flatMap { item -> [[String]] in
+                switch item {
+                case .paragraph(let p): return [[p.text]]
+                case .table(let t): return t.rows.map { $0.map { $0?.text ?? "" } }
+                case .image: return []
+                }
+            } }
+            return Data(rows.map { $0.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }.joined(separator: ",") }.joined(separator: "\n").utf8)
+        case .rtf, .word97, .odt:
+            let text = TextWriters.attributed(layouts)
+            let type: NSAttributedString.DocumentType = self == .rtf ? .rtf : self == .word97 ? .docFormat : .openDocument
+            return try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: type])
+        default:
+            throw PDFExporter.ExportError()
+        }
+    }
+}
+
+struct ExportError: LocalizedError {
+    let errorDescription: String?
 }
 
 extension EditorModel {
+    /// JPEG/HEIC/WebP quality used by image exports (0…1).
+    var imageQuality: CGFloat {
+        get { CGFloat(UserDefaults.standard.object(forKey: "imageQuality") as? Double ?? 0.9) }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "imageQuality") }
+    }
+
     func export(_ format: ExportFormat, dpi: CGFloat = 150) {
         let name = documentName
         switch format {
-        case .word, .rtf, .html:
-            let (type, ext, docType): (UTType, String, NSAttributedString.DocumentType) = {
-                switch format {
-                case .word: return (UTType("org.openxmlformats.wordprocessingml.document") ?? .data, "docx", .officeOpenXML)
-                case .rtf: return (.rtf, "rtf", .rtf)
-                default: return (.html, "html", .html)
-                }
-            }()
-            guard let url = Panels.save(name: "\(name).\(ext)", type: type) else { return }
-            let text = attributedText()
-            do {
-                let data = try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: docType])
-                try data.write(to: url)
-            } catch { Panels.alert("Export failed", error.localizedDescription) }
-        case .text:
-            guard let url = Panels.save(name: "\(name).txt", type: .plainText) else { return }
-            let text = pdf.pages.map { $0.string ?? "" }.joined(separator: "\n\n\u{0C}")
-            try? text.write(to: url, atomically: true, encoding: .utf8)
-        case .excel, .powerpoint:
+        case .word, .word97, .odt, .rtf, .text, .markdown, .html, .csv, .excel, .powerpoint:
             exportOffice(format, ocr: false)
-        case .csv:
-            guard let url = Panels.save(name: "\(name).csv", type: .commaSeparatedText) else { return }
-            try? TableExtractor.csv(from: pdf).write(to: url, atomically: true, encoding: .utf8)
-        case .png, .jpeg, .tiff:
+        case .png, .jpeg, .tiff, .heic, .webp, .bmp, .gif:
             guard let folder = Panels.folder(title: "Choose a folder for the page images") else { return }
-            let (type, ext): (UTType, String) = format == .png ? (.png, "png") : format == .jpeg ? (.jpeg, "jpg") : (.tiff, "tiff")
             guard let copy = PDFExporter.copy(of: pdf) else { return }
+            let ext = format.fileExtension, type = format.type
+            let quality = imageQuality
             run("Exporting images…") { progress in
                 for i in 0..<copy.pageCount {
                     guard let page = copy.page(at: i), let image = PageRenderer.image(of: page, dpi: dpi) else { continue }
                     let rotated = image.rotated(by: page.normalizedRotation)
-                    let data = format == .jpeg ? PageRenderer.jpegData(rotated, quality: 0.9) : PageRenderer.encode(rotated, type: type)
-                    try data?.write(to: folder.appendingPathComponent("\(name)-\(i + 1).\(ext)"))
+                    let lossy = [ExportFormat.jpeg, .heic, .webp].contains(format)
+                    let data = PageRenderer.encode(rotated, type: type, properties: lossy ? [kCGImageDestinationLossyCompressionQuality: quality] : [:])
+                    guard let data else { throw ExportError(errorDescription: "This Mac can't write \(ext.uppercased()) images.") }
+                    try data.write(to: folder.appendingPathComponent("\(name)-\(i + 1).\(ext)"))
                     progress(Double(i + 1) / Double(copy.pageCount))
                 }
             } then: { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
