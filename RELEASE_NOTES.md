@@ -1,23 +1,17 @@
-## What's new in MK PDF 1.3.0
+## What's new in MK PDF 1.3.1
 
-**Now on Windows and Android**
-- **Windows:** `MK-PDF-1.3.0-win-x64.exe` installs just for you, with no administrator rights needed. Or use `MK-PDF-1.3.0-portable.exe`, which runs without installing. PDFs open as tabs in one window, and edited text uses the fonts installed on your PC.
-- **Android:** `MK-PDF-1.3.0-android.apk` for phones and tablets (Android 7 and newer). Open PDFs from Files, mail or chat apps with *Open with MK PDF*, and scan paper with the camera.
-- The same editing, signing, organizing, OCR (offline, English and Arabic), compression, protection and conversion tools as on the Mac. The AI Assistant and Translate stay Mac-only, because they run on Apple's on-device models.
+**Editing PDFs saved from web browsers (Mac)**
+- PDFs made with Chrome, Edge or other Chromium browsers ("Save as PDF", many web reports and AI-generated documents) use a font type that macOS turned into plain shapes whenever the file was saved after an edit. After the first save, the rest of the text could no longer be selected or edited, and exports came out broken. MK PDF now keeps every page's original text exactly as it was: you can edit, save and edit again as often as you like.
+- The same protection applies to everything that adds to a page: OCR, watermarks, headers and footers, stamps and inserted pages.
+- New text typed into these documents uses the document's own font (for example Roboto, bold or regular) instead of Helvetica.
 
-**Edit scanned pages and drawings**
-- Pages that are images (scans, photos) or whose text is drawn as shapes (plans, some exports) now show **Make This Page Editable** in Edit mode. MK PDF recognizes the text offline; after that, click any line to change it. The old line is painted over in the page's own paper colour and the new text is written in the original ink colour and size.
+**Word export for web-style documents**
+- Tables drawn with row lines only (no vertical lines) come out as one proper table with all their columns, instead of several pieces.
+- Banners, notice boxes and cards are rebuilt as shaded boxes with their colours, borders and accent stripes; cards side by side stay side by side.
+- Charts and diagrams are placed as pictures, so they look exactly like the original.
+- Bold and regular text inside a line keep their own sizes (for example "3,300 AED" large and "upfront" small).
+- Only content that repeats on several pages goes into Word's header and footer, so a section heading near the top of a page stays in the body.
+- Fonts that may not be installed (web fonts such as Roboto or Inter) are declared with a common fallback, so Word substitutes Arial rather than Times.
 
-**Word export, rebuilt**
-- Tables are rebuilt from the lines and shading that draw them: the right number of columns, merged cells, shaded header and section rows, border colours, row heights and cell alignment.
-- Each PDF page becomes its own Word page with its own size, so nothing spills onto the next page. Repeating headers and footers (logos, page numbers, footer bands) go into Word's header and footer.
-- Text sits at the same height as in the PDF, centred titles keep their line breaks, lines ended on purpose stay ended, superscripts stay superscript, and divider lines under headings are kept.
-- Arabic and English lines are no longer merged together, and white text on a coloured band keeps its band.
-- Excel gets real merged cells; PowerPoint and HTML place every line of a table cell exactly.
-
-**One conversion engine everywhere**
-- Mac, Windows and Android now convert with the same engine, so a document exports the same on every device.
-
-**Fixes**
-- PDFs saved by some apps (including earlier MK PDF for Mac versions) could appear empty to the Windows and Android conversion tools; they now read correctly.
-- Edited Arabic text keeps numbers and English words in the right order.
+**Earlier exports from edited files**
+- If a file was already saved by MK PDF 1.3.0 or earlier after editing, its text may already be shapes. Open the original (unedited) file and redo the edits for fully editable text.

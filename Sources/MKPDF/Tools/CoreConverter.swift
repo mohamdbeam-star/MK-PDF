@@ -47,7 +47,10 @@ enum CoreConverter {
         // PDFKit's text in a rect (logical order, with the spaces it infers from gaps), as the native writers used.
         let textIn: @convention(block) (Int, Double, Double, Double, Double) -> String? = { index, x, y, w, h in
             guard let page = copy.page(at: index) else { return nil }
-            return page.selection(for: CGRect(x: x, y: y, width: w, height: h))?.string?.replacingOccurrences(of: "\n", with: " ")
+            // PDFKit marks pictures (U+FFFC) and unmapped glyphs with placeholder characters; they're not text.
+            guard let s = page.selection(for: CGRect(x: x, y: y, width: w, height: h))?.string else { return nil }
+            return String(String.UnicodeScalarView(s.unicodeScalars.filter { !($0.value == 0xFFFC || $0.value == 0xFFFD || (0xE000...0xF8FF).contains($0.value)) }))
+                .replacingOccurrences(of: "\n", with: " ")
         }
         ctx.setObject(textIn, forKeyedSubscript: "nativeTextIn" as NSString)
         ctx.setObject(render, forKeyedSubscript: "nativeRender" as NSString)

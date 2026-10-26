@@ -137,6 +137,12 @@ class FontMetrics {
         this.standard = StandardFontEmbedder.for(std as never);
       }
     }
+    // Type 3 fonts (Chromium "Save as PDF") have no BaseFont; the descriptor still names the font and weight.
+    if (!this.baseFont && descriptor) {
+      this.baseFont = lookupName(descriptor, 'FontName') ?? '';
+      const weight = lookupNumber(descriptor, 'FontWeight') ?? 400;
+      if (weight >= 600 && !/bold|black|heavy|semibold|demi/i.test(this.baseFont)) this.baseFont += '-Bold';
+    }
     const asc = lookupNumber(descriptor, 'Ascent'), desc = lookupNumber(descriptor, 'Descent');
     if (asc && asc > 0) this.ascent = Math.min(1.2, Math.max(0.5, asc / 1000));
     if (desc && desc < 0) this.descent = Math.max(-0.5, desc / 1000);
@@ -178,7 +184,9 @@ class FontMetrics {
 
 interface GState {
   ctm: Matrix; charSpacing: number; wordSpacing: number; hScale: number; leading: number;
-  fontName: string; fontSize: number; rise: number; fill: [number, number, number] | null; stroke: [number, number, number] | null; renderMode: number;
+  fontName: string; fontSize: number; rise: number; fill: [number, number, number] | null; stroke: [number, number, number] | null; renderMode: number; lineWidth: number;
+  /** Bounding box of the clipping path, page space (null: the whole page). */
+  clip: Rect | null;
 }
 
 export class PageContent {
@@ -191,6 +199,8 @@ export class PageContent {
   ruleColors: [number, number, number][] = [];
   /** Filled rectangles (cell shading, bars), page space. */
   fills: { rect: Rect; color: [number, number, number] }[] = [];
+  /** Filled or outlined shapes (rectangles and rounded boxes), page space: banners, cards, callouts. */
+  shapes: { rect: Rect; fill?: [number, number, number]; stroke?: [number, number, number]; lineWidth: number; rounded: boolean }[] = [];
   private fonts = new Map<string, FontMetrics | null>();
   private depthAt: number[] = [];
   private ctmAt: Matrix[] = [];
@@ -350,8 +360,8 @@ export class PageContent {
   }
 
   private analyze() {
-    this.shows = []; this.objects = []; this.rules = []; this.ruleColors = []; this.fills = []; this.depthAt = []; this.ctmAt = [];
-    let gs: GState = { ctm: IDENTITY, charSpacing: 0, wordSpacing: 0, hScale: 1, leading: 0, fontName: '', fontSize: 0, rise: 0, fill: [0, 0, 0], stroke: [0, 0, 0], renderMode: 0 };
+    this.shows = []; this.objects = []; this.rules = []; this.ruleColors = []; this.fills = []; this.shapes = []; this.depthAt = []; this.ctmAt = [];
+    let gs: GState = { ctm: IDENTITY, charSpacing: 0, wordSpacing: 0, hScale: 1, leading: 0, fontName: '', fontSize: 0, rise: 0, fill: [0, 0, 0], stroke: [0, 0, 0], renderMode: 0, lineWidth: 1, clip: null };
     const stack: GState[] = [];
     let tm: Matrix = IDENTITY, tlm: Matrix = IDENTITY;
     // Each subpath's bounds, and whether it is an axis-aligned rectangle (only corner points, no curves).
@@ -373,13 +383,36 @@ export class PageContent {
       current = null; points = []; curved = false;
     };
     const pageArea = (() => { const m = this.page.getMediaBox(); return m.width * m.height; })();
-    const thin = (r: Rect) => (r.w < 2.5 && r.h > 4) || (r.h < 2.5 && r.w > 4);
+    // Lines, and bars up to 6pt thick that are long and narrow (borders, accent stripes).
+    const thin = (r: Rect) => (r.w < 2.5 && r.h > 4) || (r.h < 2.5 && r.w > 4) || (r.w < 6 && r.h > r.w * 4) || (r.h < 6 && r.w > r.h * 4);
+    const clipTo = (r: Rect): Rect | null => {
+      const c = gs.clip;
+      if (!c) return r;
+      const x0 = Math.max(r.x, c.x), y0 = Math.max(r.y, c.y), x1 = Math.min(maxX(r), maxX(c)), y1 = Math.min(maxY(r), maxY(c));
+      return x1 >= x0 && y1 >= y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+    };
+    let clipping = false;
+    const applyClip = () => {
+      if (!clipping) return;
+      clipping = false;
+      const all = [...subpaths.map((s) => s.r), ...(current ? [current] : [])];
+      if (!all.length) return;
+      const b = all.reduce((a, r) => union(a, r)!);
+      gs.clip = clipTo(b) ?? { x: b.x, y: b.y, w: 0, h: 0 };
+    };
     const paint = (stroke: boolean, fill: boolean) => {
+      applyClip();
       close();
+      // What shows is the shape cut to the clipping area (borders are often a full box clipped to one side).
+      subpaths = subpaths.flatMap((s) => { const c = clipTo(s.r); return c ? [{ r: c, box: s.box || (c.w < s.r.w - 0.5 || c.h < s.r.h - 0.5) }] : []; });
       const ink = (stroke ? gs.stroke : gs.fill) ?? [0, 0, 0];
       const rule = (r: Rect) => { this.rules.push(r); this.ruleColors.push(ink); };
       for (const { r, box } of subpaths) {
         if (thin(r)) { rule(r); continue; }
+        if (r.w >= 8 && r.h >= 8 && r.w * r.h < pageArea * 0.85) {
+          this.shapes.push({ rect: r, fill: fill && gs.fill ? gs.fill : undefined, stroke: stroke && gs.stroke ? gs.stroke : undefined,
+            lineWidth: gs.lineWidth * Math.hypot(gs.ctm[0], gs.ctm[1]), rounded: !box });
+        }
         if (!box) continue;
         if (stroke) [rect(r.x, r.y, r.w, 0), rect(r.x, maxY(r), r.w, 0), rect(r.x, r.y, 0, r.h), rect(maxX(r), r.y, 0, r.h)].forEach(rule);
         if (fill && gs.fill && r.w * r.h < pageArea * 0.85) this.fills.push({ rect: r, color: gs.fill });
@@ -434,6 +467,7 @@ export class PageContent {
         case 'cs': gs.fill = [0, 0, 0]; break;
         case 'G': case 'RG': case 'K': case 'SC': case 'SCN': gs.stroke = color(n); break;
         case 'CS': gs.stroke = [0, 0, 0]; break;
+        case 'w': gs.lineWidth = n[0] ?? 1; break;
         case 'q': stack.push({ ...gs }); break;
         case 'Q': if (stack.length) gs = stack.pop()!; break;
         case 'cm': if (n.length === 6) gs.ctm = concat(n as Matrix, gs.ctm); break;
@@ -476,7 +510,8 @@ export class PageContent {
         case 'S': case 's': paint(true, false); break;
         case 'f': case 'F': case 'f*': paint(false, true); break;
         case 'B': case 'B*': case 'b': case 'b*': paint(true, true); break;
-        case 'n': current = null; points = []; curved = false; subpaths = []; break;
+        case 'W': case 'W*': clipping = true; break;
+        case 'n': applyClip(); current = null; points = []; curved = false; subpaths = []; break;
         case 'Do': {
           const nm = o.operands[0];
           if (nm?.t !== 'name') break;

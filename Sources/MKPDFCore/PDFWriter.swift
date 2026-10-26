@@ -7,14 +7,140 @@ import Compression
 public final class PDFWriter {
     private var bodies: [Data?] = []
     private var ids: [UnsafeRawPointer: Int] = [:]
+    /// Whole-document mode: pages are written explicitly, so other objects keep their /Parent and /P links
+    /// (form field trees, outline items, popups); in single-page mode those would drag the document along.
+    private var keepLinks = false
 
     public init() {}
 
     /// Builds a PDF whose single page has `content` drawn with `source`'s resources.
     public static func page(from source: CGPDFPage, content: Data, extraResources: [String: [(String, String)]] = [:]) -> Data? {
+        build(from: source, content: content) { _ in extraResources }
+    }
+
+    /// Like `page(from:content:)`, with `overlay`'s drawing (new text or marks drawn by Core Graphics on a page of
+    /// the same size) added on top. The overlay's operations are merged into the page's own content with their
+    /// resources renamed, so the original content is kept exactly as it was, never re-drawn through Quartz (which
+    /// turns Type 3 fonts, as written by Chromium-based browsers, into outlines that can no longer be edited),
+    /// and the new text stays ordinary page text that can be edited again.
+    public static func page(from source: CGPDFPage, content: Data, overlay: CGPDFPage) -> Data? {
+        let existing = resourceNames(of: source)
+        var n = 1
+        while existing.contains(where: { $0.hasPrefix("MKo\(n)_") }) { n += 1 }
+        let prefix = "MKo\(n)_"
+        let ops = ContentStream.parse(contentData(of: overlay)).map { renamingResources($0, prefix: prefix) }
+        var merged = Data("q\n".utf8)
+        merged.append(content)
+        merged.append(Data("\nQ\nq\n".utf8))
+        merged.append(ContentStream.serialize(ops))
+        merged.append(Data("Q\n".utf8))
+        return build(from: source, content: merged) { w in
+            var extra: [String: [(String, String)]] = [:]
+            var res: CGPDFDictionaryRef?
+            guard let dict = overlay.dictionary, CGPDFDictionaryGetDictionary(dict, "Resources", &res), let res else { return extra }
+            for category in ["Font", "XObject", "ExtGState", "ColorSpace", "Pattern", "Shading", "Properties"] {
+                var sub: CGPDFDictionaryRef?
+                guard CGPDFDictionaryGetDictionary(res, category, &sub), let sub else { continue }
+                var items: [(String, String)] = []
+                CGPDFDictionaryApplyBlock(sub, { key, object, _ in
+                    if let v = w.serialize(object) { items.append((prefix + String(cString: key), v)) }
+                    return true
+                }, nil)
+                if !items.isEmpty { extra[category] = items }
+            }
+            return extra
+        }
+    }
+
+    /// One page of a whole-document write: its content and resources come from `source` untouched; its
+    /// annotations from `annotations` (another rendition of the same page); `aliases` are other dictionaries
+    /// that stand for this page (so links and outline entries pointing at them land on it).
+    public struct DocumentPage {
+        public var source: CGPDFPage
+        public var annotations: CGPDFArrayRef?
+        public var rotation: Int
+        public var cropBox: CGRect?
+        public var aliases: [CGPDFDictionaryRef]
+        public init(source: CGPDFPage, annotations: CGPDFArrayRef?, rotation: Int, cropBox: CGRect?, aliases: [CGPDFDictionaryRef]) {
+            self.source = source; self.annotations = annotations; self.rotation = rotation; self.cropBox = cropBox; self.aliases = aliases
+        }
+    }
+
+    /// Writes a document from pages that may come from different PDFs, copying each page's own content and
+    /// resources as they are. Catalog entries (outlines, form fields, names, page labels…) and the document
+    /// information come from `catalog` and `info`.
+    public static func document(pages: [DocumentPage], catalog: CGPDFDictionaryRef?, info: CGPDFDictionaryRef?) -> Data? {
+        let w = PDFWriter()
+        w.keepLinks = true
+        let root = w.reserve(), tree = w.reserve()
+        let numbers = pages.map { _ in w.reserve() }
+        for (p, n) in zip(pages, numbers) {
+            if let d = p.source.dictionary { w.ids[unsafeBitCast(d, to: UnsafeRawPointer.self)] = n }
+            for a in p.aliases { w.ids[unsafeBitCast(a, to: UnsafeRawPointer.self)] = n }
+        }
+        for (p, n) in zip(pages, numbers) {
+            guard let dict = p.source.dictionary else { return nil }
+            var body = w.entries(dict, skipping: ["Parent", "Type", "Annots", "Rotate", "CropBox", "B", "StructParents", "Tabs"])
+            body += " /Type /Page /Parent \(tree) 0 R"
+            if let r = p.cropBox { body += " /CropBox [\(fmt(r.minX)) \(fmt(r.minY)) \(fmt(r.maxX)) \(fmt(r.maxY))]" }
+            if p.rotation % 360 != 0 { body += " /Rotate \(((p.rotation % 360) + 360) % 360)" }
+            if let a = p.annotations {
+                var items: [String] = []
+                for i in 0..<CGPDFArrayGetCount(a) {
+                    var o: CGPDFObjectRef?
+                    if CGPDFArrayGetObject(a, i, &o), let o, let v = w.serialize(o) { items.append(v) }
+                }
+                if !items.isEmpty { body += " /Annots [" + items.joined(separator: " ") + "]" }
+            }
+            w.set(n, "<<\(body)>>")
+        }
+        w.set(tree, "<< /Type /Pages /Kids [\(numbers.map { "\($0) 0 R" }.joined(separator: " "))] /Count \(pages.count) >>")
+        let extra = catalog.map { w.entries($0, skipping: ["Pages", "Type", "StructTreeRoot", "MarkInfo", "Perms", "Version"]) } ?? ""
+        w.set(root, "<< /Type /Catalog /Pages \(tree) 0 R\(extra) >>")
+        let infoRef = info.map { w.reference($0) }
+        return w.finish(root: root, info: infoRef)
+    }
+
+    /// Every resource name a page uses (fonts, images, graphics states…), across categories.
+    static func resourceNames(of page: CGPDFPage) -> Set<String> {
+        var names = Set<String>()
+        var res: CGPDFDictionaryRef?
+        guard let dict = page.dictionary, CGPDFDictionaryGetDictionary(dict, "Resources", &res), let res else { return names }
+        CGPDFDictionaryApplyBlock(res, { _, object, _ in
+            var sub: CGPDFDictionaryRef?
+            if CGPDFObjectGetValue(object, .dictionary, &sub), let sub {
+                CGPDFDictionaryApplyBlock(sub, { key, _, _ in names.insert(String(cString: key)); return true }, nil)
+            }
+            return true
+        }, nil)
+        return names
+    }
+
+    /// The operation with every resource name it refers to prefixed (fonts, XObjects, graphics states, colour
+    /// spaces, patterns, shadings and marked-content properties).
+    static func renamingResources(_ op: ContentOperation, prefix: String) -> ContentOperation {
+        var o = op
+        func rename(_ i: Int) {
+            guard o.operands.indices.contains(i), case .name(let n) = o.operands[i] else { return }
+            o.operands[i] = .name(prefix + n)
+            o.source = nil
+        }
+        switch op.op {
+        case "Tf", "Do", "gs", "sh": rename(0)
+        case "cs", "CS":
+            if let n = op.operands.first?.nameValue, !["DeviceGray", "DeviceRGB", "DeviceCMYK", "Pattern"].contains(n) { rename(0) }
+        case "scn", "SCN": rename(op.operands.count - 1)
+        case "BDC", "DP": rename(1)
+        default: break
+        }
+        return o
+    }
+
+    private static func build(from source: CGPDFPage, content: Data, extra: (PDFWriter) -> [String: [(String, String)]]) -> Data? {
         guard let pageDict = source.dictionary else { return nil }
         let w = PDFWriter()
         let catalog = w.reserve(), pages = w.reserve(), page = w.reserve()
+        let extraResources = extra(w)
         var resources = "<<>>"
         var dict: CGPDFDictionaryRef?
         if CGPDFDictionaryGetDictionary(pageDict, "Resources", &dict), let dict {
@@ -87,7 +213,7 @@ public final class PDFWriter {
         return out
     }
 
-    private func finish(root: Int) -> Data {
+    private func finish(root: Int, info: String? = nil) -> Data {
         var out = Data("%PDF-1.7\n%\u{E2}\u{E3}\u{CF}\u{D3}\n".utf8)
         var offsets: [Int] = []
         for (i, body) in bodies.enumerated() {
@@ -99,7 +225,7 @@ public final class PDFWriter {
         let xref = out.count
         var table = "xref\n0 \(bodies.count + 1)\n0000000000 65535 f \n"
         for o in offsets { table += String(format: "%010d 00000 n \n", o) }
-        table += "trailer\n<< /Size \(bodies.count + 1) /Root \(root) 0 R >>\nstartxref\n\(xref)\n%%EOF\n"
+        table += "trailer\n<< /Size \(bodies.count + 1) /Root \(root) 0 R\(info.map { " /Info \($0)" } ?? "") >>\nstartxref\n\(xref)\n%%EOF\n"
         out.append(Data(table.utf8))
         return out
     }
@@ -147,13 +273,13 @@ public final class PDFWriter {
         CGPDFDictionaryApplyBlock(dict, { key, object, _ in
             let k = String(cString: key)
             // Back-links to the page tree would drag the whole document along.
-            if !skipping.contains(k), k != "Parent", k != "P", let v = self.serialize(object) { parts.append(" /\(PDFValue.escapeName(k)) \(v)") }
+            if !skipping.contains(k), self.keepLinks || (k != "Parent" && k != "P"), let v = self.serialize(object) { parts.append(" /\(PDFValue.escapeName(k)) \(v)") }
             return true
         }, nil)
         return parts.joined()
     }
 
-    private func serialize(_ object: CGPDFObjectRef) -> String? {
+    fileprivate func serialize(_ object: CGPDFObjectRef) -> String? {
         switch CGPDFObjectGetType(object) {
         case .null: return "null"
         case .boolean:

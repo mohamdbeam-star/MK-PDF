@@ -57,7 +57,7 @@ final class FontMetrics {
     init(_ font: CGPDFDictionaryRef) {
         var name: UnsafePointer<CChar>?
         let subtype = CGPDFDictionaryGetName(font, "Subtype", &name) && name != nil ? String(cString: name!) : "Type1"
-        baseFont = CGPDFDictionaryGetName(font, "BaseFont", &name) && name != nil ? String(cString: name!) : ""
+        var base = CGPDFDictionaryGetName(font, "BaseFont", &name) && name != nil ? String(cString: name!) : ""
         var descriptor: CGPDFDictionaryRef?
         var dw = 0.0
         var sc = 0.001
@@ -90,6 +90,13 @@ final class FontMetrics {
             if let descriptor {
                 var mw: CGPDFReal = 0
                 if CGPDFDictionaryGetNumber(descriptor, "MissingWidth", &mw) { dw = Double(mw) }
+                // Type 3 fonts (Chromium "Save as PDF") have no BaseFont; the descriptor still names the font and weight.
+                var fontName: UnsafePointer<CChar>?
+                if base.isEmpty, CGPDFDictionaryGetName(descriptor, "FontName", &fontName), let fontName {
+                    base = String(cString: fontName)
+                    var weight: CGPDFReal = 400
+                    if CGPDFDictionaryGetNumber(descriptor, "FontWeight", &weight), weight >= 600, base.range(of: "bold|black|heavy|semibold|demi", options: [.regularExpression, .caseInsensitive]) == nil { base += "-Bold" }
+                }
             }
             if subtype == "Type3" {
                 var matrix: CGPDFArrayRef?
@@ -97,6 +104,7 @@ final class FontMetrics {
                 if CGPDFDictionaryGetArray(font, "FontMatrix", &matrix), let matrix, CGPDFArrayGetNumber(matrix, 0, &a) { sc = Double(a) }
             }
         }
+        baseFont = base
         defaultWidth = dw
         scale = sc
 
@@ -201,6 +209,11 @@ public final class PageContent {
     /// Writes the (edited) page as a standalone one-page PDF.
     public func pdfData() -> Data? {
         PDFWriter.page(from: page, content: ContentStream.serialize(operations))
+    }
+
+    /// The edited page with `overlay`'s drawing merged on top (see `PDFWriter.page(from:content:overlay:)`).
+    public func pdfData(overlay: CGPDFPage) -> Data? {
+        PDFWriter.page(from: page, content: ContentStream.serialize(operations), overlay: overlay)
     }
 
     // MARK: - Edits

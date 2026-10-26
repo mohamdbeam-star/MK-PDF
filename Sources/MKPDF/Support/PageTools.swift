@@ -1,4 +1,5 @@
 import AppKit
+import MKPDFCore
 import PDFKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -49,6 +50,29 @@ enum PageCompositor {
         guard let ref = page.pageRef else { return nil }
         let media = page.bounds(for: .mediaBox)
         let burnSet = Set(burn.map(ObjectIdentifier.init))
+        // The page's own content is kept as it is and the new drawing merged on top. Drawing the page into a new
+        // PDF instead would turn Type 3 fonts (Chromium "Save as PDF") into outlines, so its text could no longer
+        // be selected or edited. That remains the fallback if the page can't be copied.
+        let layer = PageFactory.render(mediaBox: media) { ctx in
+            for a in burn {
+                ctx.saveGState()
+                a.draw(with: .mediaBox, in: ctx)
+                ctx.restoreGState()
+            }
+            ctx.saveGState()
+            overlay(ctx)
+            ctx.restoreGState()
+        }
+        if let layerRef = layer?.pageRef,
+           let data = PDFWriter.page(from: ref, content: PDFWriter.contentData(of: ref), overlay: layerRef),
+           let merged = PDFDocument(data: data)?.page(at: 0) {
+            merged.setBounds(page.bounds(for: .cropBox), for: .cropBox)
+            merged.rotation = page.rotation
+            for a in page.annotations where !burnSet.contains(ObjectIdentifier(a)) && !(a is ImageStampAnnotation) {
+                if let copy = a.copy() as? PDFAnnotation { merged.addAnnotation(copy) }
+            }
+            return merged
+        }
         guard let result = PageFactory.render(mediaBox: media, { ctx in
             ctx.saveGState()
             ctx.drawPDFPage(ref)

@@ -6,6 +6,14 @@ import MKPDFCore
 /// lists text blocks, rewrites the first paragraph, moves the first image and saves. Used to verify releases.
 enum EditSmokeTest {
     static func runIfRequested() {
+        // `--copy-page-test in.pdf out.pdf`: rewrites page 1 with the content engine (no change) and saves.
+        if let i = CommandLine.arguments.firstIndex(of: "--copy-page-test"), CommandLine.arguments.count > i + 2,
+           let doc = PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[i + 1])), let page = doc.page(at: 0),
+           let copy = ContentEditor.rewrite(page, edit: { _ in }) {
+            doc.replacePage(at: 0, with: copy)
+            try? PDFExporter.data(for: doc).write(to: URL(fileURLWithPath: CommandLine.arguments[i + 2]))
+            exit(0)
+        }
         runFeatureTestIfRequested()
         runScanTestIfRequested()
         let args = CommandLine.arguments

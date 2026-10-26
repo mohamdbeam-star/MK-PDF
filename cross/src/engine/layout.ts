@@ -55,6 +55,17 @@ export interface PageLayout {
   items: LayoutItem[];
   /** Free-standing horizontal lines (dividers under headings, signature lines), page space. */
   rules: { rect: Rect; color: [number, number, number] }[];
+  /** Shaded or outlined boxes with text inside (banners, notices, cards), page space. */
+  boxes: LayoutBox[];
+}
+
+export type BoxSide = { color: [number, number, number]; width: number } | null;
+export interface LayoutBox {
+  rect: Rect;
+  /** Mostly drawing (a chart or diagram): exported as a picture of the box rather than as text. */
+  figure: boolean;
+  fill: [number, number, number] | null;
+  borders: { top: BoxSide; right: BoxSide; bottom: BoxSide; left: BoxSide };
 }
 
 export const lineText = (l: LayoutLine) => l.runs.map((r) => r.text).join('');
@@ -185,7 +196,19 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
     });
     const chars = Array.from(str);
     let runs: LayoutRun[];
-    if (groups.length > 1 && chars.filter((c) => c.trim()).length === visible.length) {
+    // Spaces drawn as glyphs (some PDF writers, e.g. Chromium, draw every character): map character by character.
+    const spacesDrawn = groups.length > 1 && chars.length === visible.length && chars.filter((c) => c.trim()).length !== visible.length;
+    if (spacesDrawn) {
+      runs = [];
+      let cur = '', st = style(visible[0]), first = visible[0];
+      chars.forEach((ch, k) => {
+        const g = visible[k], s2 = style(g);
+        const same = s2.res === st.res && s2.size === st.size && s2.color === st.color && s2.invisible === st.invisible && s2.rise === st.rise;
+        if (!same && ch.trim()) { runs.push(run(st, first, cur)); cur = ''; st = s2; first = g; }
+        cur += ch;
+      });
+      runs.push(run(st, first, cur));
+    } else if (groups.length > 1 && chars.filter((c) => c.trim()).length === visible.length) {
       runs = [];
       let gi = 0, used = 0, cur = '';
       for (const ch of chars) {
@@ -316,12 +339,59 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
     dividers.push({ rect: r, color: pc.ruleColors[k] ?? [0, 0, 0] });
   });
 
-  const layout: PageLayout = { index, width: swap ? cropR.h : cropR.w, height: swap ? cropR.w : cropR.h, crop: cropR, rotation, items: [], rules: dividers };
+  const layout: PageLayout = { index, width: swap ? cropR.h : cropR.w, height: swap ? cropR.w : cropR.h, crop: cropR, rotation, items: [], rules: dividers,
+    boxes: findBoxes(pc, glyphs, grids.map((g) => g.rect), cropR) };
   layout.items = out.sort((a, b) => {
     const ra = topLeft(layout, a.rect), rb = topLeft(layout, b.rect);
     return Math.abs(ra.y - rb.y) > 4 ? ra.y - rb.y : ra.x - rb.x;
   });
   return layout;
+}
+
+/**
+ * Boxes: a filled shape (often rounded) with text inside and no table in it. Borders come from an outline drawn
+ * on the same shape, or from shapes just under it that show around its edges (an accent stripe on one side).
+ */
+function findBoxes(pc: PageContent, glyphs: Glyph[], tables: Rect[], page: Rect): LayoutBox[] {
+  const shapes = pc.shapes;
+  const near = (a: Rect, b: Rect, t: number) => Math.abs(a.x - b.x) <= t && Math.abs(a.y - b.y) <= t && Math.abs(maxX(a) - maxX(b)) <= t && Math.abs(maxY(a) - maxY(b)) <= t;
+  const inside = (p: { x: number; y: number }, r: Rect) => p.x >= r.x && p.x <= maxX(r) && p.y >= r.y && p.y <= maxY(r);
+  const boxes: LayoutBox[] = [];
+  shapes.forEach((s, i) => {
+    const r = s.rect;
+    if (!s.fill || r.w < 40 || r.h < 16 || r.w * r.h > page.w * page.h * 0.6) return;
+    if (tables.some((t) => intersects(t, r))) return;
+    if (!glyphs.some((g) => inside({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }, r))) return;
+    // The same shape drawn again (or another fill exactly on top) wins; an earlier, larger one is its border.
+    if (shapes.slice(i + 1).some((o) => o.fill && near(o.rect, r, 1.5) && (o.rect.w * o.rect.h) <= r.w * r.h * 1.02)) return;
+    const outline = shapes.find((o) => o.stroke && near(o.rect, r, 2));
+    const w = Math.max(0.5, outline?.lineWidth ?? 0.5);
+    const line: BoxSide = outline?.stroke ? { color: outline.stroke, width: w } : null;
+    // Strips along an edge (borders drawn as thin bars, often an accent on one side) override the outline there.
+    const strip = (pick: (q: Rect) => boolean, width: (q: Rect) => number): BoxSide => {
+      const k = pc.rules.findIndex(pick);
+      return k >= 0 ? { color: pc.ruleColors[k] ?? [0, 0, 0], width: Math.max(0.5, width(pc.rules[k])) } : null;
+    };
+    // A strip counts for a side when it runs along most of that side and touches or tucks under the edge.
+    const spansV = (q: Rect) => q.h >= r.h * 0.6 && q.w < 8 && q.y <= r.y + r.h * 0.4 && maxY(q) >= maxY(r) - r.h * 0.4;
+    const spansH = (q: Rect) => q.w >= r.w * 0.6 && q.h < 8 && q.x <= r.x + r.w * 0.4 && maxX(q) >= maxX(r) - r.w * 0.4;
+    const borders: LayoutBox['borders'] = {
+      left: strip((q) => spansV(q) && q.x <= r.x + 1 && maxX(q) >= r.x - 1.5 && maxX(q) <= r.x + 6, (q) => Math.max(r.x - q.x, 0.5)) ?? line,
+      right: strip((q) => spansV(q) && maxX(q) >= maxX(r) - 1 && q.x <= maxX(r) + 1.5 && q.x >= maxX(r) - 6, (q) => Math.max(maxX(q) - maxX(r), 0.5)) ?? line,
+      top: strip((q) => spansH(q) && maxY(q) >= maxY(r) - 1 && q.y <= maxY(r) + 1.5 && q.y >= maxY(r) - 6, (q) => Math.max(maxY(q) - maxY(r), 0.5)) ?? line,
+      bottom: strip((q) => spansH(q) && q.y <= r.y + 1 && maxY(q) >= r.y - 1.5 && maxY(q) <= r.y + 6, (q) => Math.max(r.y - q.y, 0.5)) ?? line,
+    };
+    // Lines and curves inside that aren't the box's own outline: a chart or diagram.
+    const within = (q: Rect) => q.x >= r.x - 1 && maxX(q) <= maxX(r) + 1 && q.y >= r.y - 1 && maxY(q) <= maxY(r) + 1;
+    const curves = shapes.filter((o) => o !== s && o !== outline && !near(o.rect, r, 2) && within(o.rect) && o.stroke && o.rounded).length;
+    // Interior lines (gridlines, axes), not the box's own edges.
+    const lines = pc.rules.filter((q) => within(q) && q.x > r.x + 3 && maxX(q) < maxX(r) - 3 && q.y > r.y + 3 && maxY(q) < maxY(r) - 3).length;
+    boxes.push({ rect: r, fill: s.fill, borders, figure: curves >= 2 || (curves >= 1 && curves + lines >= 3) });
+  });
+  // Keep the innermost box for nested ones with the same text.
+  return boxes.filter((b) => !boxes.some((o) => o !== b && o.rect.w * o.rect.h < b.rect.w * b.rect.h && near(o.rect, b.rect, 0) === false
+    && o.rect.x >= b.rect.x - 0.5 && o.rect.y >= b.rect.y - 0.5 && maxX(o.rect) <= maxX(b.rect) + 0.5 && maxY(o.rect) <= maxY(b.rect) + 0.5
+    && glyphs.filter((g) => inside({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }, b.rect)).every((g) => inside({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }, o.rect))));
 }
 
 const isListStart = (t: string) => /^[•●▪◦‣–—\-*]/.test(t) || /^(\(?[0-9]{1,3}[.)]|\(?[a-zA-Z][.)]|[ivxIVX]{1,4}[.)])\s/.test(t);

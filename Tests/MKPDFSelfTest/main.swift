@@ -168,5 +168,28 @@ if let page = cgPage(handWrittenPDF()) {
     check(content.objects.isEmpty, "deletes the image")
 }
 
+print("Overlay merge (new text added without re-drawing the page)")
+if let page = cgPage(handWrittenPDF()) {
+    let original = PDFWriter.contentData(of: page)
+    var box = page.getBoxRect(.mediaBox)
+    let layer = NSMutableData()
+    let ctx = CGContext(consumer: CGDataConsumer(data: layer as CFMutableData)!, mediaBox: &box, nil)!
+    ctx.beginPDFPage(nil)
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Added by overlay", attributes: [.font: CTFontCreateWithName("Helvetica" as CFString, 14, nil)]))
+    ctx.textPosition = CGPoint(x: 72, y: 100)
+    CTLineDraw(line, ctx)
+    ctx.endPDFPage()
+    ctx.closePDF()
+    if let overlay = cgPage(layer as Data), let merged = PDFWriter.page(from: page, content: original, overlay: overlay), let doc = PDFDocument(data: merged),
+       let mergedPage = cgPage(merged) {
+        let content = PDFWriter.contentData(of: mergedPage)
+        check(content.range(of: original) != nil, "keeps the original content byte for byte")
+        check(words(doc.page(at: 0)!).contains("Added by overlay"), "the new text is real text")
+        check(PageContent(page: mergedPage).glyphs.count > PageContent(page: page).glyphs.count, "the new text is editable page text")
+    } else {
+        check(false, "merges the overlay")
+    }
+}
+
 print(failures == 0 ? "\nAll checks passed" : "\n\(failures) check(s) failed")
 exit(failures == 0 ? 0 : 1)

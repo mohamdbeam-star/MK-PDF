@@ -164,12 +164,14 @@ enum ContentEditor {
         guard let ref = page.pageRef else { return nil }
         let content = PageContent(page: ref)
         edit(content)
-        guard let data = content.pdfData(), let base = PDFDocument(data: data)?.page(at: 0) else { return nil }
-        var result = base
+        // New text is drawn on a separate page and merged into the content, so the rest of the page is never
+        // re-drawn (re-drawing turns Type 3 fonts into outlines, which can't be edited any more).
+        var data = content.pdfData()
         if let overlay {
-            guard let composed = PageCompositor.compose(base, overlay: overlay) else { return nil }
-            result = composed
+            guard let layer = PageFactory.render(mediaBox: page.bounds(for: .mediaBox), overlay), let layerRef = layer.pageRef else { return nil }
+            data = content.pdfData(overlay: layerRef)
         }
+        guard let data, let result = PDFDocument(data: data)?.page(at: 0) else { return nil }
         result.setBounds(page.bounds(for: .cropBox), for: .cropBox)
         result.rotation = page.rotation
         return result

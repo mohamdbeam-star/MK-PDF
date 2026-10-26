@@ -58,6 +58,7 @@ export function findGrids(rules: Rect[], ruleColors: [number, number, number][],
     if (r.w >= r.h && r.w > 3) hs.push({ y: r.y + r.h / 2, x0: r.x, x1: maxX(r) });
     else if (r.h > r.w && r.h > 3) vs.push({ x: r.x + r.w / 2, y0: r.y, y1: maxY(r) });
   }
+  const rawH = hs.map((s) => ({ ...s }));
   // Coloured cell backgrounds outline cells too (e.g. header rows drawn without borders).
   // Their edges snap to a drawn line a few points away, so a shading inset doesn't add a sliver row.
   const candidates = fills.filter((f) => f.rect.w > 3 && f.rect.h > 3 && !light(f.color) && f.rect.w * f.rect.h < page.w * page.h * 0.5);
@@ -75,7 +76,25 @@ export function findGrids(rules: Rect[], ruleColors: [number, number, number][],
     extraH.push({ y: bottom, x0: left, x1: right }, { y: top, x0: left, x1: right });
     extraV.push({ x: left, y0: bottom, y1: top }, { x: right, y0: bottom, y1: top });
   }
-  hs = mergeH([...hs, ...extraH]); vs = mergeV([...vs, ...extraV]);
+  // Only drawn lines show as borders; shading edges and implied dividers just shape the grid.
+  const drawnH = hs, drawnV = vs;
+  // Tables without vertical lines (HTML-style, rows separated by lines drawn cell by cell): where one row
+  // line ends and the next begins on the same row, at the same x on several rows, is a column divider.
+  const pieces = [...rawH, ...extraH];
+  const joints: { x: number; y: number }[] = [];
+  for (const a of pieces) for (const b of pieces) {
+    if (a !== b && Math.abs(a.y - b.y) <= 1 && Math.abs(a.x1 - b.x0) <= 1.5 && a.x1 - a.x0 > 8 && b.x1 - b.x0 > 8) joints.push({ x: (a.x1 + b.x0) / 2, y: a.y });
+  }
+  joints.sort((a, b) => a.x - b.x);
+  const implied: VSeg[] = [];
+  for (let i = 0; i < joints.length;) {
+    let j = i;
+    while (j + 1 < joints.length && joints[j + 1].x - joints[i].x <= 1.5) j++;
+    const ys = [...new Set(joints.slice(i, j + 1).map((e) => Math.round(e.y)))].sort((a, b) => a - b);
+    if (ys.length >= 2) implied.push({ x: joints[i].x, y0: ys[0], y1: ys[ys.length - 1] });
+    i = j + 1;
+  }
+  hs = mergeH([...hs, ...extraH]); vs = mergeV([...vs, ...extraV, ...implied]);
   if (hs.length < 2 || !vs.length) return [];
 
   // Connected groups of crossing segments are separate tables.
@@ -103,6 +122,8 @@ export function findGrids(rules: Rect[], ruleColors: [number, number, number][],
     // Is there a vertical line at column edge k across row i, or a horizontal line at row edge k across column j?
     const vEdge = (i: number, k: number) => v.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i]));
     const hEdge = (k: number, j: number) => h.some((s) => Math.abs(s.y - ys[k]) <= TOL + 1 && covers(s.x0, s.x1, xs[j], xs[j + 1]));
+    const vLine = (i: number, k: number) => drawnV.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i]));
+    const hLine = (k: number, j: number) => drawnH.some((s) => Math.abs(s.y - ys[k]) <= TOL + 1 && covers(s.x0, s.x1, xs[j], xs[j + 1]));
 
     const taken = rows * cols > 0 ? Array.from({ length: rows }, () => Array<boolean>(cols).fill(false)) : [];
     const cells: GridCell[] = [];
@@ -128,8 +149,8 @@ export function findGrids(rules: Rect[], ruleColors: [number, number, number][],
         cells.push({
           row: i, col: j, rowSpan: rs, colSpan: cs, rect: r, fill,
           borders: {
-            top: all((c) => hEdge(i, c), j, j + cs), bottom: all((c) => hEdge(i + rs, c), j, j + cs),
-            left: all((a) => vEdge(a, j), i, i + rs), right: all((a) => vEdge(a, j + cs), i, i + rs),
+            top: all((c) => hLine(i, c), j, j + cs), bottom: all((c) => hLine(i + rs, c), j, j + cs),
+            left: all((a) => vLine(a, j), i, i + rs), right: all((a) => vLine(a, j + cs), i, i + rs),
           },
         });
       }

@@ -1,5 +1,6 @@
 import SwiftUI
 import PDFKit
+import MKPDFCore
 import UniformTypeIdentifiers
 
 /// Passwords and permissions applied when the document is written.
@@ -72,9 +73,36 @@ enum PDFExporter {
             if let user = security.userPassword, !user.isEmpty { options[.userPasswordOption] = user }
             options[.accessPermissionsOption] = NSNumber(value: security.permissions.rawValue)
         }
-        let output = flattenedImages(doc)
+        var output = flattenedImages(doc)
+        if let single = singleSource(output) { output = single }
         guard let data = output.dataRepresentation(options: options) else { throw ExportError() }
         return data
+    }
+
+    /// PDFKit re-draws every page of a document that holds pages from other PDFs (edited, inserted, OCR'd or
+    /// stamped pages) when it saves it. Re-drawing turns Type 3 fonts, which Chromium-based browsers use for
+    /// "Save as PDF", into outlines, so the text is no longer text. For such a document, the pages are written
+    /// from their own untouched content, with the annotations (comments, form fields, links) PDFKit wrote and
+    /// the catalog (bookmarks, forms), giving a single-source document PDFKit then saves as it is.
+    static func singleSource(_ doc: PDFDocument) -> PDFDocument? {
+        // Pages from other PDFs don't belong to this document's own file.
+        let own = doc.documentRef
+        let mixed = (0..<doc.pageCount).contains { doc.page(at: $0)?.pageRef?.document !== own }
+        guard mixed, let rendered = doc.dataRepresentation(),
+              let provider = CGDataProvider(data: rendered as CFData), let cg = CGPDFDocument(provider), cg.numberOfPages == doc.pageCount else { return nil }
+        var pages: [PDFWriter.DocumentPage] = []
+        for i in 0..<doc.pageCount {
+            guard let page = doc.page(at: i), let source = page.pageRef, let out = cg.page(at: i + 1) else { return nil }
+            var annots: CGPDFArrayRef?
+            if let d = out.dictionary { CGPDFDictionaryGetArray(d, "Annots", &annots) }
+            let crop = page.bounds(for: .cropBox)
+            pages.append(PDFWriter.DocumentPage(source: source, annotations: annots, rotation: page.rotation,
+                                                cropBox: crop == source.getBoxRect(.cropBox) ? nil : crop,
+                                                aliases: out.dictionary.map { [$0] } ?? []))
+        }
+        guard let data = PDFWriter.document(pages: pages, catalog: cg.catalog, info: cg.info),
+              let single = PDFDocument(data: data), single.pageCount == doc.pageCount else { return nil }
+        return single
     }
 
     /// A standalone copy of the document with placed images burned in.

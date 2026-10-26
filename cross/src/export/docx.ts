@@ -3,7 +3,7 @@
 // cell for cell (merged cells, shading, borders, row heights).
 import { strToU8, zipSync } from 'fflate';
 import {
-  LayoutCell, LayoutImage, LayoutItem, LayoutParagraph, LayoutRun, LayoutTable, PageLayout, lineSize, paragraphRuns, topLeft,
+  LayoutBox, LayoutCell, LayoutImage, LayoutItem, LayoutParagraph, LayoutRun, LayoutTable, PageLayout, lineSize, paragraphRuns, topLeft,
 } from '../engine/layout';
 import { Rect, maxX, maxY, union } from '../engine/pageContent';
 import type { Assets } from './writers';
@@ -27,6 +27,14 @@ class Part {
 }
 
 interface Placed<T extends LayoutItem = LayoutItem> { item: T; r: Rect }
+/** Boxes side by side (cards), or one box (a banner, a notice), with the paragraphs inside each. */
+interface BoxRow { boxes: { box: LayoutBox; r: Rect; items: Placed<LayoutParagraph>[] }[]; r: Rect }
+type Entry = Placed | { row: BoxRow; r: Rect };
+
+const dark = (c: [number, number, number] | null) => !!c && 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] < 0.55;
+const cellParagraph = (c: LayoutCell): LayoutParagraph => ({
+  kind: 'paragraph', rect: c.lines.reduce<Rect>((a, l) => union(a, l.rect)!, c.lines[0].rect), lines: c.lines, alignment: c.alignment, rtl: c.rtl, pitch: c.pitch,
+});
 
 export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint8Array> {
   const files: Record<string, Uint8Array | string> = {};
@@ -41,7 +49,9 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
   const top = <K,>(m: Map<K, number>, d: K) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? d;
   const bodyFont = top(famCount, 'Calibri'), bodySize = top(sizeCount, 22);
 
+  const families = new Set<string>();
   const runXML = (r: LayoutRun, rtl: boolean, onColour = false) => {
+    families.add(r.font.family);
     const f = xml(r.font.family);
     let p = `<w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}" w:eastAsia="${f}"/>`;
     if (r.font.bold) p += '<w:b/><w:bCs/>';
@@ -185,6 +195,47 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
     return out + '</w:tbl>';
   };
 
+  /** A row of boxes as a one-row table: each box a cell with its fill, borders and padding, gaps as empty cells. */
+  const boxRowXML = (layout: PageLayout, row: BoxRow, frameLeft: number) => {
+    const cols: { w: number; b?: BoxRow['boxes'][number] }[] = [];
+    let x = row.boxes[0].r.x;
+    for (const b of row.boxes) {
+      if (b.r.x - x > 0.5) cols.push({ w: b.r.x - x });
+      cols.push({ w: b.r.w, b });
+      x = maxX(b.r);
+    }
+    const height = Math.max(...row.boxes.map((b) => b.r.h));
+    const nil = '<w:tcBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/></w:tcBorders>';
+    let out = `<w:tbl><w:tblPr><w:tblW w:w="${tw(cols.reduce((a, c) => a + c.w, 0))}" w:type="dxa"/><w:tblInd w:w="${Math.round((row.boxes[0].r.x - frameLeft) * 20)}" w:type="dxa"/>` +
+      '<w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>' +
+      `<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>${cols.map((c) => `<w:gridCol w:w="${tw(c.w)}"/>`).join('')}</w:tblGrid>` +
+      `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${tw(height)}" w:hRule="atLeast"/></w:trPr>`;
+    for (const c of cols) {
+      if (!c.b) { out += `<w:tc><w:tcPr><w:tcW w:w="${tw(c.w)}" w:type="dxa"/>${nil}</w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr></w:p></w:tc>`; continue; }
+      const { box, r, items } = c.b;
+      const sorted = [...items].sort((a, b) => a.r.y - b.r.y);
+      const side = (k: 'top' | 'left' | 'bottom' | 'right') => {
+        const s = box.borders[k];
+        return s ? `<w:${k} w:val="single" w:sz="${Math.min(96, Math.max(2, Math.round(s.width * 8)))}" w:space="0" w:color="${hex(s.color)}"/>` : `<w:${k} w:val="nil"/>`;
+      };
+      let tcPr = `<w:tcW w:w="${tw(c.w)}" w:type="dxa"/><w:tcBorders>${side('top')}${side('left')}${side('bottom')}${side('right')}</w:tcBorders>`;
+      if (box.fill) tcPr += `<w:shd w:val="clear" w:color="auto" w:fill="${hex(box.fill)}"/>`;
+      tcPr += '<w:vAlign w:val="top"/>';
+      // Inside the box each paragraph keeps its height from the box's top edge.
+      let cursor = r.y, content = '';
+      for (const it of sorted) {
+        const para: LayoutParagraph = { ...it.item, backdrop: undefined };
+        const { lh, top } = placement(layout, para);
+        const before = Math.max(0, top - cursor);
+        // The box's padding is each paragraph's indent from the cell edges (renderers agree on indents).
+        content += paragraphXML(layout, para, r.x, maxX(r), before, lh, '', false, dark(box.fill));
+        cursor += before + lh * para.lines.length;
+      }
+      out += `<w:tc><w:tcPr>${tcPr}</w:tcPr>${content || '<w:p/>'}</w:tc>`;
+    }
+    return out + '</w:tr></w:tbl>';
+  };
+
   /** Header or footer furniture: lines and pictures at fixed positions. */
   const furniture = async (layout: PageLayout, items: Placed[], part: Part, zone: { top: number; left: number; right: number }) => {
     let body = '', cursor = zone.top, z = 0, pending = '';
@@ -215,17 +266,28 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
   const sections: { width: number; height: number; margins: { t: number; r: number; b: number; l: number; header: number; footer: number }; header?: string; footer?: string }[] = [];
   const bodies: string[] = [];
 
-  for (const layout of layouts) {
+  // Page furniture is what repeats: an item counts as header/footer only if the same text (numbers aside) or a
+  // picture of the same size sits in the same zone on another page (so "Page 1 of 2" and "Page 2 of 2" match).
+  const keyOf = (item: LayoutItem) => (item.kind === 'paragraph' ? 'p:' + paragraphRuns(item).map((r) => r.text).join('').replace(/\d+/g, '#').trim()
+    : item.kind === 'image' ? `i:${Math.round(item.rect.w)}x${Math.round(item.rect.h)}` : 't');
+  const zoneKeys = (zone: 'top' | 'bottom') => layouts.map((l) => new Set(l.items.filter((it) => {
+    const r = topLeft(l, it.rect);
+    return zone === 'top' ? maxY(r) <= l.height * 0.13 : r.y >= l.height * 0.87;
+  }).map(keyOf)));
+  const topKeys = zoneKeys('top'), bottomKeys = zoneKeys('bottom');
+  const repeats = (keys: Set<string>[], page: number, item: LayoutItem) => keys.some((k, i) => i !== page && k.has(keyOf(item)));
+
+  for (const [pageNo, layout] of layouts.entries()) {
     // A paragraph on a band occupies the whole band.
     const extent = (item: LayoutItem) => (item.kind === 'paragraph' && item.backdrop ? unionRect(item.rect, item.backdrop.rect) : item.rect);
     const placed: Placed[] = layout.items.map((item) => ({ item, r: topLeft(layout, extent(item)) }));
     const H = layout.height, W = layout.width;
     // Furniture: leading items in the top 13% and trailing items in the bottom 13%, set apart from the body.
     let h = 0;
-    while (h < placed.length && placed[h].item.kind !== 'table' && maxY(placed[h].r) <= H * 0.13) h++;
+    while (h < placed.length && placed[h].item.kind !== 'table' && maxY(placed[h].r) <= H * 0.13 && repeats(topKeys, pageNo, placed[h].item)) h++;
     if (h && h < placed.length && placed[h].r.y - Math.max(...placed.slice(0, h).map((p) => maxY(p.r))) < 8) h = 0;
     let f = placed.length;
-    while (f > h && placed[f - 1].item.kind !== 'table' && placed[f - 1].r.y >= H * 0.87) f--;
+    while (f > h && placed[f - 1].item.kind !== 'table' && placed[f - 1].r.y >= H * 0.87 && repeats(bottomKeys, pageNo, placed[f - 1].item)) f--;
     if (f < placed.length && f > h && placed[f].r.y - Math.max(...placed.slice(h, f).map((p) => maxY(p.r))) < 8) f = placed.length;
     if (f === h) { h = 0; f = placed.length; } // nothing but furniture: keep it all in the body
     const head = placed.slice(0, h), foot = placed.slice(f), body = placed.slice(h, f);
@@ -263,12 +325,57 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
         cursor = Math.max(cursor + 1, d.r.y + 0.5);
       }
     };
-    for (let i = 0; i < body.length; i++) {
-      const p = body[i];
-      flushDividers(p.r.y);
+    // Boxes (banners, notices, cards) take the paragraphs inside them; an unruled table laid over several boxes
+    // (cards side by side) gives each cell's text to its box.
+    const boxes = layout.boxes.map((box) => ({ box, r: topLeft(layout, box.rect), items: [] as Placed<LayoutParagraph>[] }))
+      .filter((b) => b.r.y >= bodyTop - 1 && maxY(b.r) <= bodyBottom + 1);
+    const ownerOf = (r: Rect) => {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      return boxes.filter((b) => cx >= b.r.x && cx <= maxX(b.r) && cy >= b.r.y && cy <= maxY(b.r)).sort((a, b) => a.r.w * a.r.h - b.r.w * b.r.h)[0];
+    };
+    const flow: Entry[] = [];
+    for (const p of body) {
+      if (p.item.kind === 'paragraph') {
+        const o = ownerOf(p.r);
+        if (o) { o.items.push(p as Placed<LayoutParagraph>); continue; }
+      } else if (p.item.kind === 'table' && !p.item.ruled && boxes.length) {
+        const cells = p.item.cells.filter((c) => c.lines.length).map((c) => { const item = cellParagraph(c); return { item, r: topLeft(layout, item.rect) }; });
+        if (cells.length && cells.every((c) => ownerOf(c.r))) { cells.forEach((c) => ownerOf(c.r)!.items.push(c)); continue; }
+      }
+      flow.push(p);
+    }
+    // A box holding other boxes gives its own paragraphs back to the page; boxes side by side share a row.
+    const used = boxes.filter((b) => b.items.length);
+    const holders = used.filter((b) => used.some((o) => o !== b && o.r.x >= b.r.x - 0.5 && maxX(o.r) <= maxX(b.r) + 0.5 && o.r.y >= b.r.y - 0.5 && maxY(o.r) <= maxY(b.r) + 0.5));
+    for (const b of holders) flow.push(...b.items);
+    const rows: BoxRow[] = [];
+    for (const b of used.filter((x) => !holders.includes(x)).sort((a, c) => a.r.y - c.r.y)) {
+      const row = rows.find((rw) => rw.boxes.some((o) => Math.min(maxY(o.r), maxY(b.r)) - Math.max(o.r.y, b.r.y) > Math.min(o.r.h, b.r.h) * 0.5));
+      if (row) { row.boxes.push(b); row.r = union(row.r, b.r)!; } else rows.push({ boxes: [b], r: { ...b.r } });
+    }
+    for (const row of rows) {
+      // Charts and diagrams go in as a picture of the box (their text is part of the drawing).
+      for (const f of row.boxes.filter((b) => b.box.figure)) flow.push({ item: { kind: 'image', rect: f.box.rect } as LayoutImage, r: f.r });
+      row.boxes = row.boxes.filter((b) => !b.box.figure).sort((a, c) => a.r.x - c.r.x);
+      if (row.boxes.length) flow.push({ row, r: row.boxes.reduce<Rect>((a, b) => union(a, b.r)!, row.boxes[0].r) });
+    }
+    flow.sort((a, b) => (Math.abs(a.r.y - b.r.y) > 2 ? a.r.y - b.r.y : a.r.x - b.r.x));
+
+    for (let i = 0; i < flow.length; i++) {
+      const entry = flow[i];
+      flushDividers(entry.r.y);
+      if ('row' in entry) {
+        const gap = entry.r.y - cursor;
+        if (gap > 0.5 || pending) out += spacer(Math.max(gap, 1), pending);
+        pending = '';
+        out += boxRowXML(layout, entry.row, left);
+        cursor = Math.max(cursor, maxY(entry.r));
+        continue;
+      }
+      const p = entry;
       if (p.item.kind === 'image') {
         const r = p.r;
-        const besideText = body.some((o) => o !== p && o.item.kind !== 'image' && o.r.y < maxY(r) - 2 && maxY(o.r) > r.y + 2);
+        const besideText = flow.some((o) => o !== p && !('item' in o && o.item.kind === 'image') && o.r.y < maxY(r) - 2 && maxY(o.r) > r.y + 2);
         if (besideText || r.y < cursor - 2) { pending += await anchored(doc, layout, p as Placed<LayoutImage>, z++); continue; }
         const g = await picture(doc, layout, p.item);
         if (!g) continue;
@@ -329,11 +436,23 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
   }
   const bf = xml(bodyFont);
   files['[Content_Types].xml'] = `${XML_HEAD}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/>` +
-    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>' +
     headers.map((h) => `<Override PartName="/word/${h.name}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${h.kind}+xml"/>`).join('') + '</Types>';
   files['_rels/.rels'] = `${XML_HEAD}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/></Relationships>`;
-  files['word/_rels/document.xml.rels'] = rels(doc, `<Relationship Id="rIdStyles" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rIdSettings" Type="${REL}/settings" Target="settings.xml"/>` +
+  files['word/_rels/document.xml.rels'] = rels(doc, `<Relationship Id="rIdStyles" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rIdSettings" Type="${REL}/settings" Target="settings.xml"/><Relationship Id="rIdFonts" Type="${REL}/fontTable" Target="fontTable.xml"/>` +
     headers.map((h) => `<Relationship Id="${relId(h.name)}" Type="${REL}/${h.kind}" Target="${h.name}.xml"/>`).join(''));
+  // Fonts with a fallback: a PC without the PDF's font (often a web font such as Roboto or Inter) gets a common
+  // one of the same kind instead of whatever Word picks.
+  const fallback = (family: string): [string, string] => {
+    const f = family.toLowerCase();
+    if (/mono|courier|consol|code|menlo/.test(f)) return ['Courier New', 'modern'];
+    if (/serif|times|georgia|garamond|cambria|book|minion|merriweather|playfair|lora|baskerville|palatino/.test(f) && !/sans/.test(f)) return ['Times New Roman', 'roman'];
+    return ['Arial', 'swiss'];
+  };
+  families.add(bodyFont);
+  files['word/fontTable.xml'] = `${XML_HEAD}<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    [...families].map((f) => { const [alt, kind] = fallback(f); return `<w:font w:name="${xml(f)}">${alt !== f ? `<w:altName w:val="${alt}"/>` : ''}<w:family w:val="${kind}"/><w:pitch w:val="${kind === 'modern' ? 'fixed' : 'variable'}"/></w:font>`; }).join('') +
+    '</w:fonts>';
   files['word/settings.xml'] = `${XML_HEAD}<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
   files['word/styles.xml'] = `${XML_HEAD}<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${bf}" w:hAnsi="${bf}" w:cs="${bf}" w:eastAsia="${bf}"/><w:sz w:val="${bodySize}"/><w:szCs w:val="${bodySize}"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>` +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>';

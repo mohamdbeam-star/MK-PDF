@@ -1,7 +1,7 @@
 {
   "name": "mkpdf-cross",
   "productName": "MK PDF",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "MK PDF for Windows and Android",
   "author": "MK PDF",
   "private": true,

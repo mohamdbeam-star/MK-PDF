@@ -18,3 +18,4 @@ for (const it of lay.items) {
     for (const c of it.cells.slice(0, 40)) console.log(`   r${c.row}c${c.col}${c.colSpan > 1 ? ` cs${c.colSpan}` : ''}${c.rowSpan > 1 ? ` rs${c.rowSpan}` : ''} [${c.alignment},${c.valign}]${c.fill ? ' fill' : ''} ${JSON.stringify(c.lines.map(lineText).join(' / ')).slice(0, 80)}`);
   }
 }
+for (const b of lay.boxes) console.log(`BOX${b.figure ? '(figure)' : ''} ${b.rect.x.toFixed(0)},${b.rect.y.toFixed(0)} ${b.rect.w.toFixed(0)}x${b.rect.h.toFixed(0)} fill=${b.fill?.map((c) => c.toFixed(2))} ${(['top', 'right', 'bottom', 'left'] as const).map((k) => b.borders[k] ? `${k}:${b.borders[k]!.width.toFixed(1)}@${b.borders[k]!.color.map((c) => c.toFixed(2))}` : '').filter(Boolean).join(' ')}`);
