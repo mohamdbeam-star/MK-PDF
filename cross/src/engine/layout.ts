@@ -339,8 +339,11 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
     dividers.push({ rect: r, color: pc.ruleColors[k] ?? [0, 0, 0] });
   });
 
-  const layout: PageLayout = { index, width: swap ? cropR.h : cropR.w, height: swap ? cropR.w : cropR.h, crop: cropR, rotation, items: [], rules: dividers,
-    boxes: findBoxes(pc, glyphs, grids.map((g) => g.rect), cropR) };
+  const boxes = findBoxes(pc, glyphs, grids.map((g) => g.rect), cropR);
+  // Lines inside a box or along its edges belong to the box (its borders, a chart's gridlines).
+  const inBox = (r: Rect) => boxes.some((b) => r.x >= b.rect.x - 3 && maxX(r) <= maxX(b.rect) + 3 && r.y >= b.rect.y - 3 && maxY(r) <= maxY(b.rect) + 3);
+  const layout: PageLayout = { index, width: swap ? cropR.h : cropR.w, height: swap ? cropR.w : cropR.h, crop: cropR, rotation, items: [],
+    rules: dividers.filter((d) => !inBox(d.rect)), boxes };
   layout.items = out.sort((a, b) => {
     const ra = topLeft(layout, a.rect), rb = topLeft(layout, b.rect);
     return Math.abs(ra.y - rb.y) > 4 ? ra.y - rb.y : ra.x - rb.x;

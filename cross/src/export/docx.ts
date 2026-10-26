@@ -237,14 +237,24 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
   };
 
   /** Header or footer furniture: lines and pictures at fixed positions. */
-  const furniture = async (layout: PageLayout, items: Placed[], part: Part, zone: { top: number; left: number; right: number }) => {
+  const furniture = async (layout: PageLayout, items: Placed[], part: Part, zone: { top: number; left: number; right: number },
+    rule?: { r: Rect; color: [number, number, number] }) => {
     let body = '', cursor = zone.top, z = 0, pending = '';
+    // A line just above the footer text: the first footer paragraph's top border, at the same gap.
+    let border = '';
+    if (rule) {
+      const gap = Math.max(0, Math.min(31, Math.min(...items.map((p) => p.r.y)) - maxY(rule.r)));
+      border = `<w:pBdr><w:top w:val="single" w:sz="${Math.max(2, Math.round(Math.max(rule.r.h, 0.5) * 8))}" w:space="${Math.round(gap)}" w:color="${hex(rule.color)}"/></w:pBdr>`;
+      cursor = Math.max(cursor, maxY(rule.r));
+    }
     for (const p of items) {
       if (p.item.kind === 'image') { pending += await anchored(part, layout, p as Placed<LayoutImage>, z++); continue; }
       if (p.item.kind !== 'paragraph') continue;
       const para = p.item, { lh, top: lineTop } = placement(layout, para);
       const before = Math.max(0, lineTop - cursor);
-      body += paragraphXML(layout, para, zone.left, zone.right, before, lh, pending);
+      let xmlPara = paragraphXML(layout, para, zone.left, zone.right, before, lh, pending);
+      if (border) { xmlPara = xmlPara.replace('<w:pPr>', `<w:pPr>${border}`); border = ''; }
+      body += xmlPara;
       pending = '';
       cursor += before + lh * para.lines.length;
     }
@@ -307,19 +317,26 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
     const footerGap = (items: Placed[], top: number) => Math.max(0, Math.min(...items.map((p) => p.r.y)) - top);
     const sec: (typeof sections)[number] = { width: W, height: H, margins: { t: marginT, r: right, b: marginB, l: left, header: headerDist, footer: footerDist } };
     if (head.length) { const part = new Part(''); sec.header = addFurniture('header', await furniture(layout, head, part, { top: headerDist, left, right: W - right }), part); anyFurniture.header = true; }
-    if (foot.length) { const part = new Part(''); sec.footer = addFurniture('footer', await furniture(layout, foot, part, { top: H - marginB + footerGap(foot, H - marginB), left, right: W - right }), part); anyFurniture.footer = true; }
+    // A divider below all body content and above the footer is the footer's rule, not body content.
+    const lastBodyBottom = body.length ? Math.max(...body.map((p) => maxY(p.r))) : 0;
+    const footRules = foot.length ? layout.rules.map((d) => ({ r: topLeft(layout, d.rect), color: d.color, d }))
+      .filter((x) => x.r.y > lastBodyBottom + 2 && maxY(x.r) <= footTop + 1) : [];
+    const footRule = footRules.sort((a, b) => b.r.y - a.r.y)[0];
+    if (foot.length) { const part = new Part(''); sec.footer = addFurniture('footer', await furniture(layout, foot, part, { top: H - marginB + footerGap(foot, H - marginB), left, right: W - right }, footRule), part); anyFurniture.footer = true; }
 
     // Body: every paragraph's first baseline lands where it is in the PDF.
     let out = '', cursor = marginT, pending = '', z = 0;
     const frameRight = W - right;
     const bodyTop = head.length ? headBottom : 0, bodyBottom = foot.length ? footTop : H;
-    const dividers = layout.rules.map((d) => ({ r: topLeft(layout, d.rect), color: d.color })).filter((d) => d.r.y > bodyTop && d.r.y < bodyBottom).sort((a, b) => a.r.y - b.r.y);
+    const dividers = layout.rules.filter((d) => d !== footRule?.d).map((d) => ({ r: topLeft(layout, d.rect), color: d.color }))
+      .filter((d) => d.r.y > bodyTop && d.r.y < bodyBottom).sort((a, b) => a.r.y - b.r.y);
     /** Divider lines above `y` become empty paragraphs with a bottom border at the line's height. */
     const flushDividers = (y: number) => {
       while (dividers.length && dividers[0].r.y <= y) {
         const d = dividers.shift()!;
         const h = d.r.y - cursor - 0.5;
-        if (h < -2) continue;
+        // Never past the bottom margin: that would start a new, empty page in Word.
+        if (h < -2 || d.r.y > H - marginB - 2) continue;
         out += `<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="${Math.max(2, Math.round(Math.max(d.r.h, 0.5) * 8))}" w:space="0" w:color="${hex(d.color)}"/></w:pBdr>` +
           `<w:spacing w:before="0" w:after="0" w:line="${Math.max(20, tw(h))}" w:lineRule="exact"/><w:ind w:left="${Math.round((d.r.x - left) * 20)}" w:right="${Math.round((frameRight - maxX(d.r)) * 20)}"/><w:rPr><w:sz w:val="2"/></w:rPr></w:pPr></w:p>`;
         cursor = Math.max(cursor + 1, d.r.y + 0.5);
