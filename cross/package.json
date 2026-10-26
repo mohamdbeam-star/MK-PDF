@@ -96,6 +96,18 @@
         "description": "PDF Document",
         "role": "Editor"
       }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mohamdbeam-star",
+        "repo": "MK-PDF",
+        "releaseType": "release"
+      }
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohamdbeam-star/MK-PDF.git"
   }
 }
