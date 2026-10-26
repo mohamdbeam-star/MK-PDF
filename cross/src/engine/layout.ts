@@ -57,6 +57,8 @@ export interface PageLayout {
   rules: { rect: Rect; color: [number, number, number] }[];
   /** Shaded or outlined boxes with text inside (banners, notices, cards), page space. */
   boxes: LayoutBox[];
+  /** Two-column bands, read column by column. */
+  columns: ColumnBand[];
 }
 
 export type BoxSide = { color: [number, number, number]; width: number } | null;
@@ -158,6 +160,60 @@ export function textIn(source: TextItem[] | TextIndex, r: Rect): string {
   return out.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * pdf.js adds word spacing to every space, including the two-byte spaces of composite fonts that the page draws
+ * without it, so on justified lines its text drifts right of the glyphs. Each run of items is stretched back onto
+ * the glyphs it covers (per baseline and per segment, since every column starts at its own position). It also
+ * drops the space between items in different fonts ("this" + bold "Agreement"); the page's space glyph puts it back.
+ */
+function alignItems(items: TextItem[], glyphs: Glyph[]): TextItem[] {
+  const runs: { y: number; x0: number; x1: number }[] = [];
+  const all = glyphs.slice().sort((a, b) => a.rect.x - b.rect.x);
+  const sorted = glyphs.filter((g) => !isSpace(g)).sort((a, b) => b.origin.y - a.origin.y || a.rect.x - b.rect.x);
+  let line: Glyph[] = [];
+  const endLine = () => {
+    line.sort((a, b) => a.rect.x - b.rect.x);
+    let run: { y: number; x0: number; x1: number } | null = null;
+    for (const g of line) {
+      if (run && g.rect.x - run.x1 <= g.size * 1.6) run.x1 = Math.max(run.x1, maxX(g.rect));
+      else { run = { y: line[0].origin.y, x0: g.rect.x, x1: maxX(g.rect) }; runs.push(run); }
+    }
+    line = [];
+  };
+  for (const g of sorted) {
+    if (line.length && Math.abs(g.origin.y - line[0].origin.y) > 0.6) endLine();
+    line.push(g);
+  }
+  endLine();
+  const out = items.slice();
+  const byLine = new Map<number, number[]>();
+  items.forEach((it, i) => { if (!it.rtl) { const k = Math.round(it.y * 2); byLine.set(k, [...(byLine.get(k) ?? []), i]); } });
+  for (const idx of byLine.values()) {
+    const y = items[idx[0]].y;
+    const mine = runs.filter((r) => Math.abs(r.y - y) <= 0.6).sort((a, b) => a.x0 - b.x0);
+    if (!mine.length) continue;
+    idx.sort((a, b) => items[a].x - items[b].x);
+    mine.forEach((run, k) => {
+      const next = mine[k + 1]?.x0 ?? Infinity;
+      const group = idx.filter((i) => items[i].x >= run.x0 - 2 && items[i].x < next - 2);
+      const solid = group.filter((i) => items[i].str.trim());
+      if (!solid.length) return;
+      const ix0 = items[solid[0]].x, ix1 = Math.max(...solid.map((i) => items[i].x + items[i].w));
+      const scale = (run.x1 - run.x0) / (ix1 - ix0);
+      if (!(ix1 > ix0) || Math.abs(scale - 1) < 0.003 || scale < 0.8 || scale > 1.25) return;
+      for (const i of group) out[i] = { ...items[i], x: run.x0 + (items[i].x - ix0) * scale, w: items[i].w * scale };
+    });
+    const onLine = all.filter((g) => Math.abs(g.origin.y - y) <= 0.6);
+    for (let k = 1; k < idx.length; k++) {
+      const a = out[idx[k - 1]], b = out[idx[k]];
+      if (/\s$/.test(a.str) || /^\s/.test(b.str)) continue;
+      const before = onLine.filter((g) => g.rect.x < b.x - 0.3).pop();
+      if (before && isSpace(before) && before.rect.x > a.x) out[idx[k - 1]] = { ...a, str: a.str + ' ' };
+    }
+  }
+  return out;
+}
+
 /** Extracts the layout of page `index`. `items` are pdf.js text items in page space. */
 export function layoutPage(doc: PDFDocument, index: number, items: PageText, content?: PageContent): PageLayout {
   const page = doc.getPage(index);
@@ -168,7 +224,7 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
   const swap = rotation % 180 !== 0;
   const glyphs = pc.glyphs.filter((g) => g.upright && g.size > 0.5 && g.rect.w > 0.01);
   const center = (g: Glyph) => ({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 });
-  const text = Array.isArray(items) ? indexText(items) : null;
+  const text = Array.isArray(items) ? indexText(alignItems(items, glyphs)) : null;
   const lookup = (r: Rect) => (text ? textIn(text, r) : (items as { textIn(r: Rect): string }).textIn(r).replace(/\s+/g, ' ').trim());
 
   const toLine = (s: Glyph[]): LayoutLine | null => {
@@ -241,83 +297,106 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
     out.push(tableFrom(grid, cells));
   }
 
-  // 2. Remaining rows by baseline, split into segments at column-sized gaps or runs of 3+ spaces.
-  const rows = segmentRows(glyphs.filter((g) => !inGrid.has(g)));
-  const lineRows = rows.map((r) => r.map(toLine).filter((l): l is LayoutLine => !!l)).filter((r) => r.length);
+  // Text outside ruled tables flows in its region: the page, or each column of a multi-column band.
+  const rest = glyphs.filter((g) => !inGrid.has(g));
+  const boxes = findBoxes(pc, glyphs, grids.map((g) => g.rect), cropR);
+  const inAnyBox = (g: Glyph) => { const m = { x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }; return boxes.some((b) => contains(b.rect, m)); };
+  // Lines or banners running across the gutter make it a form or a table without vertical lines (label | value
+  // rows), not text columns.
+  const bands = findColumns(segmentRows(rest.filter((g) => !inAnyBox(g)))).filter((b) => {
+    const at = b.cols[1].x;
+    if (boxes.some((x) => x.rect.x < at - 5 && maxX(x.rect) > at + 5 && intersects(x.rect, b.rect))) return false;
+    return pc.rules.filter((r) => r.w >= 30 && r.h <= 3 && r.x < at - 5 && maxX(r) > at + 5 && r.y > b.rect.y - 3 && r.y < maxY(b.rect) + 3).length < 2;
+  });
+  const flow = (subset: Glyph[], frame: Rect) => {
+    // 2. Remaining rows by baseline, split into segments at column-sized gaps or runs of 3+ spaces.
+    const rows = segmentRows(subset);
+    const lineRows = rows.map((r) => r.map(toLine).filter((l): l is LayoutLine => !!l)).filter((r) => r.length);
 
-  // 3. Unruled tables: two or more consecutive rows with two or more segments.
-  let free: LayoutLine[] = [];
-  for (let i = 0; i < lineRows.length;) {
-    let j = i;
-    while (j < lineRows.length && lineRows[j].length >= 2 && (j === i || Math.abs(lineRows[j - 1][0].baseline - lineRows[j][0].baseline) < lineSize(lineRows[j][0]) * 3.2)) j++;
-    if (j - i >= 2) {
-      const t = buildTable(lineRows.slice(i, j));
-      // Wrapped cell text: following one-segment rows aligned with a column join that cell.
-      while (j < lineRows.length && lineRows[j].length === 1) {
-        const l = lineRows[j][0];
-        const prev = lineRows[j - 1][0];
-        const col = t.columns.map((c, k) => [c, k] as const).filter(([c]) => c <= l.rect.x + 8).pop()?.[1];
-        if (col === undefined || prev.baseline - l.baseline >= lineSize(l) * 1.7 || (col === 0 && Math.abs(l.rect.x - t.columns[0]) >= 8)) break;
-        const cell = t.cells.find((c) => c.row === t.rowRects.length - 1 && c.col === col);
-        if (cell) { cell.lines.push(l); cell.rect = union(cell.rect, l.rect); }
-        t.rect = union(t.rect, l.rect);
-        j++;
-      }
-      const zone = { x: t.rect.x - 6, y: t.rect.y - 8, w: t.rect.w + 12, h: t.rect.h + 16 };
-      t.bordered = pc.rules.filter((r) => intersects(zone, r) && r.w > r.h).length >= 2;
-      t.rows = legacyRows(t.cells, t.rowRects.length, t.columns.length);
-      out.push(t);
-      i = j;
-    } else { free.push(...lineRows[i]); i++; }
-  }
-
-  // 4. Paragraphs. Pieces on one baseline become a single tabbed line.
-  free.sort((a, b) => (Math.abs(a.baseline - b.baseline) > Math.max(1.5, Math.max(lineSize(a), lineSize(b)) * 0.3) ? b.baseline - a.baseline : a.rect.x - b.rect.x));
-  const joined: LayoutLine[] = [];
-  for (const l of free) {
-    const last = joined[joined.length - 1];
-    const tolerance = Math.max(1.5, Math.max(lineSize(l), lineSize(last ?? l)) * 0.3);
-    if (last && Math.abs(last.baseline - l.baseline) < tolerance && l.rect.x > maxX(last.rect) && isRTL(lineText(l)) === isRTL(lineText(last))) {
-      if (!last.parts.length) last.parts = [{ ...last, parts: [], tabStops: [] }];
-      last.parts.push(l);
-      last.tabStops.push(l.rect.x);
-      last.runs = [...last.runs, { ...l.runs[0], text: '\t' }, ...l.runs];
-      last.rect = union(last.rect, l.rect);
-    } else joined.push({ ...l });
-  }
-  free = joined;
-  const groups: LayoutLine[][] = [];
-  for (const l of free) {
-    const size = lineSize(l), rtl = isRTL(lineText(l));
-    let target = -1;
-    if (!isListStart(lineText(l))) {
-      for (let gi = groups.length - 1; gi >= 0; gi--) {
-        const g = groups[gi], last = g[g.length - 1];
-        const pitch = last.baseline - l.baseline;
-        const sameSize = Math.abs(size - lineSize(last)) < Math.max(size, lineSize(last)) * 0.18;
-        const spacing = pitch > size * 0.8 && pitch < size * 1.9;
-        const steady = g.length < 2 || Math.abs(pitch - (g[g.length - 2].baseline - last.baseline)) < size * 0.35;
-        const overlap = Math.min(maxX(l.rect), maxX(last.rect)) - Math.max(l.rect.x, last.rect.x) > 0;
-        const aligned = Math.abs(l.rect.x - g[Math.min(1, g.length - 1)].rect.x) < size * 3 || Math.abs((l.rect.x + maxX(l.rect)) / 2 - (last.rect.x + maxX(last.rect)) / 2) < size;
-        // Lines in different scripts (an English and an Arabic footer line) stay separate paragraphs.
-        if (sameSize && spacing && steady && overlap && aligned && isRTL(lineText(last)) === rtl && !last.parts.length && !l.parts.length) { target = gi; break; }
-      }
+    // 3. Unruled tables: two or more consecutive rows with two or more segments.
+    let free: LayoutLine[] = [];
+    for (let i = 0; i < lineRows.length;) {
+      let j = i;
+      while (j < lineRows.length && lineRows[j].length >= 2 && (j === i || Math.abs(lineRows[j - 1][0].baseline - lineRows[j][0].baseline) < lineSize(lineRows[j][0]) * 3.2)) j++;
+      if (j - i >= 2) {
+        const t = buildTable(lineRows.slice(i, j));
+        // Wrapped cell text: following one-segment rows aligned with a column join that cell.
+        while (j < lineRows.length && lineRows[j].length === 1) {
+          const l = lineRows[j][0];
+          const prev = lineRows[j - 1][0];
+          const col = t.columns.map((c, k) => [c, k] as const).filter(([c]) => c <= l.rect.x + 8).pop()?.[1];
+          if (col === undefined || prev.baseline - l.baseline >= lineSize(l) * 1.7 || (col === 0 && Math.abs(l.rect.x - t.columns[0]) >= 8)) break;
+          const cell = t.cells.find((c) => c.row === t.rowRects.length - 1 && c.col === col);
+          if (cell) { cell.lines.push(l); cell.rect = union(cell.rect, l.rect); }
+          t.rect = union(t.rect, l.rect);
+          j++;
+        }
+        const zone = { x: t.rect.x - 6, y: t.rect.y - 8, w: t.rect.w + 12, h: t.rect.h + 16 };
+        t.bordered = pc.rules.filter((r) => intersects(zone, r) && r.w > r.h).length >= 2;
+        t.rows = legacyRows(t.cells, t.rowRects.length, t.columns.length);
+        out.push(t);
+        i = j;
+      } else { free.push(...lineRows[i]); i++; }
     }
-    if (target >= 0) groups[target].push(l); else groups.push([l]);
-  }
-  for (const g of groups) {
-    const r = g.reduce<Rect | null>((a, l) => union(a, l.rect), null)!;
-    const text = g.map(lineText).join(' ');
-    const rtl = isRTL(text);
-    let alignment = alignmentOf(g, r, rtl);
-    if (g.length === 1 && Math.abs(r.x + r.w / 2 - (cropR.x + cropR.w / 2)) < 6 && r.x - cropR.x > 90 && !g[0].parts.length) alignment = 'center';
-    // Centred lines (titles, addresses) are always broken where the author broke them.
-    if (alignment === 'center') g.slice(0, -1).forEach((l) => (l.hardBreak = true)); else markBreaks(g, r, alignment);
-    const pitch = g.length > 1 ? g[0].baseline - g[1].baseline : lineSize(g[0]) * 1.2;
-    const behind = [...pc.fills].reverse().find((f) => f.rect.w > r.w * 0.9 && f.rect.x <= r.x + 1 && maxX(f.rect) >= maxX(r) - 1 && f.rect.y <= r.y + 1 && maxY(f.rect) >= maxY(r) - 1
-      && f.rect.h < Math.max(r.h * 8, 80) && !f.color.every((c) => c > 0.97));
-    const onImage = pc.objects.some((o) => o.kind !== 'form' && o.bounds.x <= r.x + 1 && maxX(o.bounds) >= maxX(r) - 1 && o.bounds.y <= r.y + 1 && maxY(o.bounds) >= maxY(r) - 1);
-    out.push({ kind: 'paragraph', rect: r, lines: g, alignment, rtl, pitch, ...(behind ? { backdrop: { rect: behind.rect, color: behind.color } } : {}), ...(onImage ? { onImage } : {}) });
+
+    // 4. Paragraphs. Pieces on one baseline become a single tabbed line.
+    free.sort((a, b) => (Math.abs(a.baseline - b.baseline) > Math.max(1.5, Math.max(lineSize(a), lineSize(b)) * 0.3) ? b.baseline - a.baseline : a.rect.x - b.rect.x));
+    const joined: LayoutLine[] = [];
+    for (const l of free) {
+      const last = joined[joined.length - 1];
+      const tolerance = Math.max(1.5, Math.max(lineSize(l), lineSize(last ?? l)) * 0.3);
+      if (last && Math.abs(last.baseline - l.baseline) < tolerance && l.rect.x > maxX(last.rect) && isRTL(lineText(l)) === isRTL(lineText(last))) {
+        if (!last.parts.length) last.parts = [{ ...last, parts: [], tabStops: [] }];
+        last.parts.push(l);
+        last.tabStops.push(l.rect.x);
+        last.runs = [...last.runs, { ...l.runs[0], text: '\t' }, ...l.runs];
+        last.rect = union(last.rect, l.rect);
+      } else joined.push({ ...l });
+    }
+    free = joined;
+    const groups: LayoutLine[][] = [];
+    for (const l of free) {
+      const size = lineSize(l), rtl = isRTL(lineText(l));
+      let target = -1;
+      if (!isListStart(lineText(l))) {
+        for (let gi = groups.length - 1; gi >= 0; gi--) {
+          const g = groups[gi], last = g[g.length - 1];
+          const pitch = last.baseline - l.baseline;
+          const sameSize = Math.abs(size - lineSize(last)) < Math.max(size, lineSize(last)) * 0.18;
+          const spacing = pitch > size * 0.8 && pitch < size * 1.9;
+          const steady = g.length < 2 || Math.abs(pitch - (g[g.length - 2].baseline - last.baseline)) < size * 0.35;
+          const overlap = Math.min(maxX(l.rect), maxX(last.rect)) - Math.max(l.rect.x, last.rect.x) > 0;
+          const aligned = Math.abs(l.rect.x - g[Math.min(1, g.length - 1)].rect.x) < size * 3 || Math.abs((l.rect.x + maxX(l.rect)) / 2 - (last.rect.x + maxX(last.rect)) / 2) < size;
+          // Lines in different scripts (an English and an Arabic footer line) stay separate paragraphs.
+          if (sameSize && spacing && steady && overlap && aligned && isRTL(lineText(last)) === rtl && !last.parts.length && !l.parts.length) { target = gi; break; }
+        }
+      }
+      if (target >= 0) groups[target].push(l); else groups.push([l]);
+    }
+    for (const g of groups) {
+      const r = g.reduce<Rect | null>((a, l) => union(a, l.rect), null)!;
+      const text = g.map(lineText).join(' ');
+      const rtl = isRTL(text);
+      let alignment = alignmentOf(g, r, rtl);
+      if (g.length === 1 && Math.abs(r.x + r.w / 2 - (frame.x + frame.w / 2)) < 6 && r.x - frame.x > Math.min(90, frame.w * 0.15) && !g[0].parts.length) alignment = 'center';
+      // Centred lines (titles, addresses) are always broken where the author broke them.
+      if (alignment === 'center') g.slice(0, -1).forEach((l) => (l.hardBreak = true)); else markBreaks(g, r, alignment);
+      const pitch = g.length > 1 ? g[0].baseline - g[1].baseline : lineSize(g[0]) * 1.2;
+      const behind = [...pc.fills].reverse().find((f) => f.rect.w > r.w * 0.9 && f.rect.x <= r.x + 1 && maxX(f.rect) >= maxX(r) - 1 && f.rect.y <= r.y + 1 && maxY(f.rect) >= maxY(r) - 1
+        && f.rect.h < Math.max(r.h * 8, 80) && !f.color.every((c) => c > 0.97));
+      const onImage = pc.objects.some((o) => o.kind !== 'form' && o.bounds.x <= r.x + 1 && maxX(o.bounds) >= maxX(r) - 1 && o.bounds.y <= r.y + 1 && maxY(o.bounds) >= maxY(r) - 1);
+      out.push({ kind: 'paragraph', rect: r, lines: g, alignment, rtl, pitch, ...(behind ? { backdrop: { rect: behind.rect, color: behind.color } } : {}), ...(onImage ? { onImage } : {}) });
+    }
+  };
+  const midOf = (g: Glyph) => ({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 });
+  const inBand = (g: Glyph) => (inAnyBox(g) ? undefined : bands.find((b) => contains(b.rect, midOf(g))));
+  flow(rest.filter((g) => !inBand(g)), cropR);
+  for (const b of bands) {
+    const mine = rest.filter((g) => inBand(g) === b);
+    // Each row splits where its own gap is (justified columns don't leave a perfectly straight gutter).
+    const splitFor = (g: Glyph) => { const m = midOf(g); return b.splits.find((r) => m.y >= r.y0 && m.y <= r.y1)?.x ?? b.cols[1].x; };
+    flow(mine.filter((g) => midOf(g).x < splitFor(g)), b.cols[0]);
+    flow(mine.filter((g) => midOf(g).x >= splitFor(g)), b.cols[1]);
   }
 
   // 5. Images (skipping full-page backgrounds behind real text, e.g. OCR'd scans).
@@ -339,11 +418,10 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
     dividers.push({ rect: r, color: pc.ruleColors[k] ?? [0, 0, 0] });
   });
 
-  const boxes = findBoxes(pc, glyphs, grids.map((g) => g.rect), cropR);
   // Lines inside a box or along its edges belong to the box (its borders, a chart's gridlines).
   const inBox = (r: Rect) => boxes.some((b) => r.x >= b.rect.x - 3 && maxX(r) <= maxX(b.rect) + 3 && r.y >= b.rect.y - 3 && maxY(r) <= maxY(b.rect) + 3);
   const layout: PageLayout = { index, width: swap ? cropR.h : cropR.w, height: swap ? cropR.w : cropR.h, crop: cropR, rotation, items: [],
-    rules: dividers.filter((d) => !inBox(d.rect)), boxes };
+    rules: dividers.filter((d) => !inBox(d.rect)), boxes, columns: bands };
   layout.items = out.sort((a, b) => {
     const ra = topLeft(layout, a.rect), rb = topLeft(layout, b.rect);
     return Math.abs(ra.y - rb.y) > 4 ? ra.y - rb.y : ra.x - rb.x;
@@ -389,12 +467,96 @@ function findBoxes(pc: PageContent, glyphs: Glyph[], tables: Rect[], page: Rect)
     const curves = shapes.filter((o) => o !== s && o !== outline && !near(o.rect, r, 2) && within(o.rect) && o.stroke && o.rounded).length;
     // Interior lines (gridlines, axes), not the box's own edges.
     const lines = pc.rules.filter((q) => within(q) && q.x > r.x + 3 && maxX(q) < maxX(r) - 3 && q.y > r.y + 3 && maxY(q) < maxY(r) - 3).length;
-    boxes.push({ rect: r, fill: s.fill, borders, figure: curves >= 2 || (curves >= 1 && curves + lines >= 3) });
+    // A white shape without any border is just page background: invisible, so not a box.
+    const plain = s.fill.every((c) => c > 0.985) && !borders.top && !borders.right && !borders.bottom && !borders.left;
+    if (!plain) boxes.push({ rect: r, fill: s.fill, borders, figure: curves >= 2 || (curves >= 1 && curves + lines >= 3) });
   });
   // Keep the innermost box for nested ones with the same text.
   return boxes.filter((b) => !boxes.some((o) => o !== b && o.rect.w * o.rect.h < b.rect.w * b.rect.h && near(o.rect, b.rect, 0) === false
     && o.rect.x >= b.rect.x - 0.5 && o.rect.y >= b.rect.y - 0.5 && maxX(o.rect) <= maxX(b.rect) + 0.5 && maxY(o.rect) <= maxY(b.rect) + 0.5
     && glyphs.filter((g) => inside({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }, b.rect)).every((g) => inside({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 }, o.rect))));
+}
+
+/** A run of rows laid out in two columns (newspaper style): the band, each column's area, and where each row splits. */
+export interface ColumnBand { rect: Rect; cols: Rect[]; splits: { y0: number; y1: number; x: number }[] }
+
+/**
+ * Finds two-column bands with a projection profile: across the rows, count how many have ink at each x. A gutter
+ * is a valley no (or almost no) row inks, between two well-filled column areas. A row breaks the band only if a
+ * letter sits on the gutter; each row splits at its own gap there (justified columns don't leave a perfectly
+ * straight gutter, and the two columns' baselines needn't line up). A band is read column by column.
+ */
+function findColumns(rows: Glyph[][][]): ColumnBand[] {
+  const lines = rows.map((row) => {
+    const glyphs = row.flat().filter((g) => !isSpace(g)).map((g) => g.rect).sort((a, b) => a.x - b.x);
+    const all = row.flat();
+    return { glyphs, top: Math.max(...all.map((g) => maxY(g.rect))), bottom: Math.min(...all.map((g) => g.rect.y)) };
+  }).filter((l) => l.glyphs.length);
+  if (lines.length < 8) return [];
+  const bands: ColumnBand[] = [];
+  let remaining = lines;
+  for (let round = 0; round < 2 && remaining.length >= 8; round++) {
+    const tx0 = Math.min(...remaining.map((l) => l.glyphs[0].x)), tx1 = Math.max(...remaining.flatMap((l) => l.glyphs.map((g) => maxX(g))));
+    const width = tx1 - tx0;
+    if (width < 200) break;
+    const bins = Math.ceil(width) + 1, ink = new Array<number>(bins).fill(0);
+    for (const l of remaining) {
+      const hit = new Uint8Array(bins);
+      for (const g of l.glyphs) for (let x = Math.max(0, Math.floor(g.x - tx0)); x <= Math.min(bins - 1, Math.ceil(maxX(g) - tx0)); x++) hit[x] = 1;
+      hit.forEach((h, x) => { ink[x] += h; });
+    }
+    // The emptiest point in the middle 30–70%, with busy columns on both sides.
+    let gx = -1, low = Infinity;
+    for (let x = Math.floor(width * 0.3); x <= Math.ceil(width * 0.7); x++) if (ink[x] < low) { low = ink[x]; gx = x; }
+    // Within that valley, just left of where the right column starts, so text starting right at the valley's edge (a
+    // column's headings) stays on its side.
+    if (gx >= 0) { let a = gx, b = gx; while (a > 0 && ink[a - 1] <= low) a--; while (b < bins - 1 && ink[b + 1] <= low) b++; gx = Math.round(Math.max((a + b) / 2, b - 6)); }
+    const avg = (from: number, to: number) => { let t = 0, n = 0; for (let x = Math.max(0, from); x < Math.min(bins, to); x++) { t += ink[x]; n++; } return n ? t / n : 0; };
+    const leftBusy = avg(Math.floor(width * 0.1), gx - 10), rightBusy = avg(gx + 10, Math.ceil(width * 0.9));
+    const n = remaining.length;
+    if (low > Math.max(1, n * 0.12) || leftBusy < Math.max(3, n * 0.15) || rightBusy < Math.max(3, n * 0.15)) break;
+    const at = tx0 + gx;
+    // Where the right column's lines start; a line starting well left of that (a centred title) crosses the gutter.
+    const starts = remaining.map((l) => l.glyphs.find((g) => g.x >= at)?.x).filter((x): x is number => x !== undefined).sort((a, b) => a - b);
+    const rightStart = starts[Math.floor(starts.length * 0.1)] ?? at;
+    const kind = remaining.map((l) => {
+      if (l.glyphs.some((g) => g.x < at - 0.5 && maxX(g) > at + 0.5)) return 'across' as const;
+      const first = l.glyphs.find((g) => g.x >= at);
+      if (first && first.x < rightStart - 15 && !l.glyphs.some((g) => maxX(g) <= at)) return 'across' as const;
+      const left = l.glyphs.some((g) => maxX(g) <= at), right = l.glyphs.some((g) => g.x >= at);
+      return left && right ? ('both' as const) : left ? ('left' as const) : ('right' as const);
+    });
+    // The longest run without a letter on the gutter, with plenty of text on each side.
+    let best: [number, number, number] | null = null, start = 0;
+    const close = (end: number) => {
+      const k = kind.slice(start, end), l = k.filter((x) => x !== 'right').length, r = k.filter((x) => x !== 'left').length;
+      if (l >= 4 && r >= 4 && l + r >= 10 && (!best || l + r > best[2])) best = [start, end, l + r];
+    };
+    // A wide empty stretch (the space above a footer) also ends a run.
+    const heights = remaining.map((l) => l.top - l.bottom).sort((a, b) => a - b), gapLimit = Math.max(30, heights[heights.length >> 1] * 4);
+    kind.forEach((k, i) => {
+      if (k === 'across') { close(i); start = i + 1; } else if (i > start && remaining[i - 1].bottom - remaining[i].top > gapLimit) { close(i); start = i; }
+    });
+    close(kind.length);
+    if (!best) break;
+    const [from, to] = best as [number, number, number];
+    const run = remaining.slice(from, to);
+    // Columns must be long lines, not a table's short cells.
+    const sideWidths = (left: boolean) => run.map((l) => { const gs = l.glyphs.filter((g) => (left ? maxX(g) <= at : g.x >= at)); return gs.length ? maxX(gs[gs.length - 1]) - gs[0].x : 0; })
+      .filter((w) => w > 0).sort((a, b) => a - b);
+    const lw = sideWidths(true), rw = sideWidths(false);
+    if (lw[lw.length >> 1] < width * 0.25 || rw[rw.length >> 1] < width * 0.25) break;
+    const top = Math.max(...run.map((l) => l.top)), bottom = Math.min(...run.map((l) => l.bottom));
+    const rect = { x: tx0, y: bottom - 1, w: width, h: top - bottom + 2 };
+    const splits = run.map((l) => {
+      const before = l.glyphs.filter((g) => maxX(g) <= at), after = l.glyphs.filter((g) => g.x >= at);
+      const x = before.length && after.length ? (maxX(before[before.length - 1]) + after[0].x) / 2 : at;
+      return { y0: l.bottom - 0.5, y1: l.top + 0.5, x };
+    });
+    if (rect.h > 40) bands.push({ rect, splits, cols: [{ x: tx0, y: rect.y, w: at - tx0, h: rect.h }, { x: at, y: rect.y, w: tx1 - at, h: rect.h }] });
+    remaining = [...remaining.slice(0, from), ...remaining.slice(to)];
+  }
+  return bands;
 }
 
 const isListStart = (t: string) => /^[•●▪◦‣–—\-*]/.test(t) || /^(\(?[0-9]{1,3}[.)]|\(?[a-zA-Z][.)]|[ivxIVX]{1,4}[.)])\s/.test(t);

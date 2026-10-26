@@ -19,3 +19,4 @@ for (const it of lay.items) {
   }
 }
 for (const b of lay.boxes) console.log(`BOX${b.figure ? '(figure)' : ''} ${b.rect.x.toFixed(0)},${b.rect.y.toFixed(0)} ${b.rect.w.toFixed(0)}x${b.rect.h.toFixed(0)} fill=${b.fill?.map((c) => c.toFixed(2))} ${(['top', 'right', 'bottom', 'left'] as const).map((k) => b.borders[k] ? `${k}:${b.borders[k]!.width.toFixed(1)}@${b.borders[k]!.color.map((c) => c.toFixed(2))}` : '').filter(Boolean).join(' ')}`);
+for (const c of lay.columns) console.log(`COLUMNS band y=${c.rect.y.toFixed(0)}..${(c.rect.y + c.rect.h).toFixed(0)} cols ${c.cols.map((r) => `${r.x.toFixed(0)}-${(r.x + r.w).toFixed(0)}`).join(' | ')}`);

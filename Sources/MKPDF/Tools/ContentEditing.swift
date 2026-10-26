@@ -61,7 +61,7 @@ enum ContentEditor {
 
         struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor?; var invisible: Bool }
         let lineInfo: [Line] = lines.compactMap { gs in
-            let visible = gs.filter { $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) }
+            let visible = gs.filter { $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) && $0.bytes != Data([0, 32]) }
             guard !visible.isEmpty else { return nil }
             let rect = visible.reduce(CGRect.null) { $0.union($1.rect) }
             let sizes = visible.map(\.size).sorted()

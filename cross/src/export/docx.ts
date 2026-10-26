@@ -28,7 +28,7 @@ class Part {
 
 interface Placed<T extends LayoutItem = LayoutItem> { item: T; r: Rect }
 /** Boxes side by side (cards), or one box (a banner, a notice), with the paragraphs inside each. */
-interface BoxRow { boxes: { box: LayoutBox; r: Rect; items: Placed<LayoutParagraph>[] }[]; r: Rect }
+interface BoxRow { boxes: { box: LayoutBox; r: Rect; items: Placed<LayoutParagraph>[] }[]; r: Rect; columns?: boolean }
 type Entry = Placed | { row: BoxRow; r: Rect };
 
 const dark = (c: [number, number, number] | null) => !!c && 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] < 0.55;
@@ -209,7 +209,8 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
     let out = `<w:tbl><w:tblPr><w:tblW w:w="${tw(cols.reduce((a, c) => a + c.w, 0))}" w:type="dxa"/><w:tblInd w:w="${Math.round((row.boxes[0].r.x - frameLeft) * 20)}" w:type="dxa"/>` +
       '<w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>' +
       `<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>${cols.map((c) => `<w:gridCol w:w="${tw(c.w)}"/>`).join('')}</w:tblGrid>` +
-      `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="${tw(height)}" w:hRule="atLeast"/></w:trPr>`;
+      // Text columns may run over a page break; boxes stay whole.
+      `<w:tr><w:trPr>${row.columns ? '' : `<w:cantSplit/><w:trHeight w:val="${tw(height)}" w:hRule="atLeast"/>`}</w:trPr>`;
     for (const c of cols) {
       if (!c.b) { out += `<w:tc><w:tcPr><w:tcW w:w="${tw(c.w)}" w:type="dxa"/>${nil}</w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr></w:p></w:tc>`; continue; }
       const { box, r, items } = c.b;
@@ -344,14 +345,29 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
     };
     // Boxes (banners, notices, cards) take the paragraphs inside them; an unruled table laid over several boxes
     // (cards side by side) gives each cell's text to its box.
+    // Two-column bands: each column is a borderless cell; its paragraphs (and boxes inside it) are read in order.
+    const bands = layout.columns.map((c) => ({ r: topLeft(layout, c.rect), cols: c.cols.map((col) => ({
+      box: { rect: col, figure: false, fill: null, borders: { top: null, right: null, bottom: null, left: null } } as LayoutBox,
+      r: topLeft(layout, col), items: [] as Placed<LayoutParagraph>[] })) }));
+    const bandOf = (r: Rect) => {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      return bands.find((b) => cx >= b.r.x - 1 && cx <= maxX(b.r) + 1 && cy >= b.r.y - 1 && cy <= maxY(b.r) + 1);
+    };
+    const columnOf = (r: Rect) => bandOf(r)?.cols.find((c) => r.x + r.w / 2 >= c.r.x - 1 && r.x + r.w / 2 <= maxX(c.r) + 1);
     const boxes = layout.boxes.map((box) => ({ box, r: topLeft(layout, box.rect), items: [] as Placed<LayoutParagraph>[] }))
-      .filter((b) => b.r.y >= bodyTop - 1 && maxY(b.r) <= bodyBottom + 1);
+      .filter((b) => b.r.y >= bodyTop - 1 && maxY(b.r) <= bodyBottom + 1 && !bandOf(b.r));
     const ownerOf = (r: Rect) => {
       const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
       return boxes.filter((b) => cx >= b.r.x && cx <= maxX(b.r) && cy >= b.r.y && cy <= maxY(b.r)).sort((a, b) => a.r.w * a.r.h - b.r.w * b.r.h)[0];
     };
     const flow: Entry[] = [];
     for (const p of body) {
+      const column = p.item.kind !== 'image' && !(p.item.kind === 'table' && p.item.ruled) ? columnOf(p.r) : undefined;
+      if (column && p.item.kind === 'paragraph') { column.items.push(p as Placed<LayoutParagraph>); continue; }
+      if (column && p.item.kind === 'table') {
+        for (const c of p.item.cells.filter((x) => x.lines.length)) { const item = cellParagraph(c); column.items.push({ item, r: topLeft(layout, item.rect) }); }
+        continue;
+      }
       if (p.item.kind === 'paragraph') {
         const o = ownerOf(p.r);
         if (o) { o.items.push(p as Placed<LayoutParagraph>); continue; }
@@ -375,6 +391,10 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
       for (const f of row.boxes.filter((b) => b.box.figure)) flow.push({ item: { kind: 'image', rect: f.box.rect } as LayoutImage, r: f.r });
       row.boxes = row.boxes.filter((b) => !b.box.figure).sort((a, c) => a.r.x - c.r.x);
       if (row.boxes.length) flow.push({ row, r: row.boxes.reduce<Rect>((a, b) => union(a, b.r)!, row.boxes[0].r) });
+    }
+    for (const b of bands) {
+      const cols = b.cols.filter((c) => c.items.length);
+      if (cols.length) flow.push({ row: { boxes: cols, r: b.r, columns: true }, r: b.r });
     }
     flow.sort((a, b) => (Math.abs(a.r.y - b.r.y) > 2 ? a.r.y - b.r.y : a.r.x - b.r.x));
 

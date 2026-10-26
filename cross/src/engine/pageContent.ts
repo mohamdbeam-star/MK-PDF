@@ -66,7 +66,7 @@ export interface TextShow { opIndex: number; glyphs: Glyph[]; fontSize: number; 
 
 export interface GraphicObject { kind: 'image' | 'form' | 'inline'; opIndex: number; name: string; ctm: Matrix; bounds: Rect }
 
-const isSpace = (g: Glyph) => (g.bytes.length === 1 && g.bytes[0] === 32) || (g.bytes.length === 2 && g.bytes[0] === 0 && g.bytes[1] === 3);
+const isSpace = (g: Glyph) => (g.bytes.length === 1 && g.bytes[0] === 32) || (g.bytes.length === 2 && g.bytes[0] === 0 && (g.bytes[1] === 3 || g.bytes[1] === 32));
 export { isSpace };
 
 function lookupDict(d: PDFDict | undefined, key: string): PDFDict | undefined {
