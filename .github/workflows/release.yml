@@ -1,0 +1,156 @@
+# Builds MK PDF for every platform on GitHub's machines and publishes them in one release, v<VERSION>:
+#   Mac      MK-PDF-<v>.dmg               (Apple Silicon + Intel)
+#   Windows  MK-PDF-<v>-win-x64.exe       (installs for the current user, no admin rights)
+#            MK-PDF-<v>-portable.exe      (runs without installing)
+#   Android  MK-PDF-<v>-android.apk
+# Each app's update notification looks for its own file in the newest release.
+# Runs when a v* tag is pushed, or by hand (Actions → Release → Run workflow).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the build number is the commit count
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cross/package-lock.json
+      - name: Select newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)" && xcodebuild -version
+      - run: cd cross && npm ci --no-audit --no-fund
+      - name: Build DMG
+        run: scripts/make_dmg.sh
+      - name: Check the app's document conversion
+        run: |
+          swift run -c release MKPDFSelfTest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: MK-PDF-*.dmg
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cross
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cross/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - name: Build installer and portable app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:win
+      - name: Smoke test (the app starts, loads and opens a PDF)
+        shell: pwsh
+        run: |
+          $env:MKPDF_SMOKE = "1"
+          $env:MKPDF_SMOKE_WAIT = "8000"
+          $env:MKPDF_SMOKE_OUT = "$env:RUNNER_TEMP\smoke.txt"
+          $exe = Get-ChildItem release/win-unpacked -Filter "MK PDF.exe" | Select-Object -First 1
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "`"$((Resolve-Path test/fixtures/sample.pdf).Path)`"" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "The app didn't finish its smoke test" }
+          $out = Get-Content $env:MKPDF_SMOKE_OUT -Raw
+          Write-Output $out
+          if ($out -notmatch 'SMOKE .*"tabs":\["sample.pdf"\].*"errors":\[\]') { throw "Smoke test failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            cross/release/MK-PDF-*-win-x64.exe
+            cross/release/MK-PDF-*-portable.exe
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cross/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Build web app and copy it into the Android project
+        working-directory: cross
+        run: npm ci --no-audit --no-fund && npm run build && npx cap sync android
+      - name: Prepare signing key
+        id: key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "permanent=true" >> "$GITHUB_OUTPUT"
+          else
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.p12" -storetype PKCS12 -storepass temporary1 -keypass temporary1 \
+              -alias mkpdf -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=MK PDF temporary key" >/dev/null 2>&1
+            echo "permanent=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build signed APK
+        working-directory: cross/android
+        env:
+          APP_VERSION_CODE: ${{ github.run_number }}
+          KEYSTORE_FILE: ${{ runner.temp }}/release.p12
+          KEYSTORE_PASSWORD: ${{ steps.key.outputs.permanent == 'true' && secrets.ANDROID_KEYSTORE_PASSWORD || 'temporary1' }}
+          KEY_ALIAS: ${{ steps.key.outputs.permanent == 'true' && secrets.ANDROID_KEY_ALIAS || 'mkpdf' }}
+          KEY_PASSWORD: ${{ steps.key.outputs.permanent == 'true' && secrets.ANDROID_KEY_PASSWORD || 'temporary1' }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --warning-mode=summary
+          V=$(tr -d '[:space:]' < ../../VERSION)
+          mkdir -p ../dist-android
+          cp app/build/outputs/apk/release/app-release.apk "../dist-android/MK-PDF-$V-android.apk"
+          echo "${{ steps.key.outputs.permanent }}" > ../dist-android/permanent-key.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: cross/dist-android/*
+
+  publish:
+    needs: [mac, windows, android]
+    if: ${{ !cancelled() && (needs.mac.result == 'success' || needs.windows.result == 'success' || needs.android.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          cp RELEASE_NOTES.md notes.md
+          if [ -f assets/permanent-key.txt ] && [ "$(cat assets/permanent-key.txt)" != "true" ]; then
+            printf '\n\n> Android: this build is signed with a temporary key, so to install a later version you uninstall this one first. (See README → Android signing.)\n' >> notes.md
+          fi
+          rm -f assets/permanent-key.txt
+          ls -la assets
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" assets/* --clobber
+            gh release edit "v$V" --notes-file notes.md --title "MK PDF $V" --latest
+          else
+            gh release create "v$V" assets/* --title "MK PDF $V" --notes-file notes.md --latest --target "$GITHUB_SHA"
+          fi
