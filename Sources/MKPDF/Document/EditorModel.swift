@@ -200,6 +200,12 @@ final class EditorModel: ObservableObject {
 
     var pdf: PDFDocument { document.pdf }
     var pageCount: Int { pdf.pageCount }
+    /// The page shown has no text at all (a scan, or text drawn as shapes): only recognition makes it editable.
+    var currentPageHasNoText: Bool {
+        guard let page = pdf.page(at: min(pageIndex, max(0, pageCount - 1))) else { return false }
+        return (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var currentPage: PDFPage? { pdfView?.currentPage ?? pdf.page(at: min(pageIndex, max(0, pageCount - 1))) }
     var documentName: String { fileURL?.baseName ?? "Untitled" }
 

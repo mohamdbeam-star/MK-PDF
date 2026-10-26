@@ -3,3 +3,13 @@
 .DS_Store
 .swiftpm/
 *.dmg
+cross/node_modules/
+cross/dist/
+cross/dist-core/
+cross/dist-android/
+cross/release/
+cross/android/local.properties
+# Copied from node_modules at build time (cross/scripts/copy-assets.mjs)
+cross/public/cmaps/
+cross/public/standard_fonts/
+cross/public/tesseract/

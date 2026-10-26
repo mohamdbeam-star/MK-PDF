@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MK PDF</string>
+    <string name="title_activity_main">MK PDF</string>
+    <string name="package_name">com.mkoussa.mkpdf</string>
+    <string name="custom_url_scheme">com.mkoussa.mkpdf</string>
+</resources>

@@ -1,15 +1,13 @@
 #!/bin/zsh
-# Publishes the current VERSION as a GitHub release with the DMG attached.
-# The app's update checker reads the latest release, so publishing is what notifies users.
-#
-#   scripts/release.sh              # release VERSION with notes from RELEASE_NOTES.md
+# Publishes the current VERSION: tags v<VERSION> and pushes it. GitHub Actions (.github/workflows/release.yml)
+# then builds the Mac, Windows and Android apps and publishes them as one release, which every installed copy
+# picks up through its update check. Write RELEASE_NOTES.md first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=$(tr -d '[:space:]' < VERSION)
 [[ -z "$(git status --porcelain)" ]] || { echo "Commit your changes first."; exit 1; }
-scripts/make_dmg.sh
-NOTES=RELEASE_NOTES.md
-[[ -f $NOTES ]] || { echo "Write $NOTES first."; exit 1; }
-git tag -f "v$VERSION"
-git push -q origin main "v$VERSION" --force
-gh release create "v$VERSION" "MK-PDF-$VERSION.dmg" --title "MK PDF $VERSION" --notes-file "$NOTES" --latest
+[[ -f RELEASE_NOTES.md ]] || { echo "Write RELEASE_NOTES.md first."; exit 1; }
+git push -q origin main
+git tag "v$VERSION"
+git push -q origin "v$VERSION"
+echo "Tagged v$VERSION. Follow the build: gh run watch \$(gh run list -w Release -L 1 --json databaseId -q '.[0].databaseId')"

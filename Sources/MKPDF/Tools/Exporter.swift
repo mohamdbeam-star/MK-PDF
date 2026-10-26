@@ -37,8 +37,41 @@ enum ExportFormat {
 
     var isImage: Bool { [.png, .jpeg, .tiff, .heic, .webp, .bmp, .gif].contains(self) }
 
-    /// Document formats, written from the recovered page layout.
+    /// The shared conversion core's name for this format, if it writes it.
+    private var coreFormat: String? {
+        switch self {
+        case .word, .word97, .odt: return "docx"
+        case .excel: return "xlsx"
+        case .powerpoint: return "pptx"
+        case .html: return "html"
+        case .markdown: return "md"
+        case .text: return "txt"
+        case .csv: return "csv"
+        case .rtf: return "rtf"
+        default: return nil
+        }
+    }
+
+    /// Document formats. Written by the conversion core shared with Windows and Android (same results on every
+    /// platform); the native writers below remain as a fallback.
     func render(_ doc: PDFDocument, title: String, progress: (Double) -> Void = { _ in }) throws -> Data {
+        if let format = coreFormat, CoreConverter.isAvailable {
+            do {
+                let data = try CoreConverter.convert(doc, format: format, title: title)
+                progress(1)
+                guard self == .word97 || self == .odt else { return data }
+                // Older Word and OpenDocument: converted from the Word file by the system's text system.
+                let text = try NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.officeOpenXML], documentAttributes: nil)
+                return try text.data(from: NSRange(location: 0, length: text.length),
+                                     documentAttributes: [.documentType: self == .word97 ? NSAttributedString.DocumentType.docFormat : .openDocument])
+            } catch {
+                NSLog("MK PDF: conversion core failed (%@), using the built-in writer", error.localizedDescription)
+            }
+        }
+        return try renderNative(doc, title: title, progress: progress)
+    }
+
+    private func renderNative(_ doc: PDFDocument, title: String, progress: (Double) -> Void) throws -> Data {
         let layouts = LayoutExtractor.layout(doc, includeImages: [.word, .markdown].contains(self))
         progress(0.5)
         switch self {

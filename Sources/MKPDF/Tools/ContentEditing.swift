@@ -13,6 +13,8 @@ struct TextBlock {
     var color: NSColor
     var pitch: CGFloat          // distance between baselines
     var alignment: NSTextAlignment
+    /// Recognised (OCR) text over a scan or drawing: the visible letters are pixels, not text.
+    var scanned = false
 
     var firstBaseline: CGFloat { baselines.first ?? rect.maxY }
     var isMultiline: Bool { lineRects.count > 1 }
@@ -57,14 +59,15 @@ enum ContentEditor {
             }
         }
 
-        struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor? }
+        struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor?; var invisible: Bool }
         let lineInfo: [Line] = lines.compactMap { gs in
             let visible = gs.filter { $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) }
             guard !visible.isEmpty else { return nil }
             let rect = visible.reduce(CGRect.null) { $0.union($1.rect) }
             let sizes = visible.map(\.size).sorted()
             return Line(rect: rect, baseline: visible[0].origin.y, size: CGFloat(sizes[sizes.count / 2]),
-                        font: baseFonts[visible[0].fontResource] ?? "", resource: visible[0].fontResource, color: visible[0].color)
+                        font: baseFonts[visible[0].fontResource] ?? "", resource: visible[0].fontResource, color: visible[0].color,
+                        invisible: visible.allSatisfy(\.invisible))
         }
 
         // Lines → paragraphs: evenly spaced, similar size, aligned.
@@ -72,7 +75,7 @@ enum ContentEditor {
         for line in lineInfo {
             if let block = groups.last, let last = block.last {
                 let pitch = last.baseline - line.baseline
-                let sameSize = abs(line.size - last.size) < max(line.size, last.size) * 0.15
+                let sameSize = abs(line.size - last.size) < max(line.size, last.size) * (line.invisible ? 0.3 : 0.15)
                 let spacingOK = pitch > line.size * 0.8 && pitch < line.size * 1.9
                 let steady = block.count < 2 || abs(pitch - (block[block.count - 2].baseline - last.baseline)) < line.size * 0.3
                 let aligned = abs(line.rect.minX - block[block.count > 1 ? 1 : 0].rect.minX) < line.size * (block.count == 1 ? 3 : 1.2)
@@ -107,10 +110,43 @@ enum ContentEditor {
             let pitch = group.count > 1 ? (group[0].baseline - group[1].baseline) : size * 1.2
             let rect = group.reduce(CGRect.null) { $0.union($1.rect) }
             let centered = group.count > 1 && group.allSatisfy { abs($0.rect.midX - rect.midX) < size } && !group.allSatisfy { abs($0.rect.minX - rect.minX) < 1 }
+            let scanned = group.allSatisfy(\.invisible)
             return TextBlock(rect: rect, lineRects: group.map(\.rect), baselines: group.map(\.baseline), text: text,
-                             font: font, color: color, pitch: pitch,
-                             alignment: centered ? .center : (text.isRightToLeft ? .right : .left))
+                             font: font, color: scanned ? .black : color, pitch: pitch,
+                             alignment: centered ? .center : (text.isRightToLeft ? .right : .left), scanned: scanned)
         }
+    }
+
+    /// The paper and ink colours around a rect of the rendered page (for editing scanned text in place).
+    static func sampleColors(on page: PDFPage, around rect: CGRect) -> (paper: NSColor, ink: NSColor) {
+        let crop = page.bounds(for: .cropBox), scale: CGFloat = 2
+        guard let image = PageRenderer.image(of: page, dpi: 72 * scale) else { return (.white, .black) }
+        let area = rect.insetBy(dx: -3, dy: -3)
+        let px = CGRect(x: (area.minX - crop.minX) * scale, y: (crop.maxY - area.maxY) * scale, width: area.width * scale, height: area.height * scale)
+            .integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard px.width > 4, px.height > 4, let cut = image.cropping(to: px) else { return (.white, .black) }
+        let w = cut.width, h = cut.height
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return (.white, .black) }
+        ctx.draw(cut, in: CGRect(x: 0, y: 0, width: w, height: h))
+        func pixel(_ x: Int, _ y: Int) -> (Double, Double, Double) { let i = (y * w + x) * 4; return (Double(data[i]) / 255, Double(data[i + 1]) / 255, Double(data[i + 2]) / 255) }
+        // Paper: the median of the border ring. Ink: the darkest fifth of the pixels that clearly differ from it.
+        var ring: [(Double, Double, Double)] = []
+        for x in 0..<w { ring.append(pixel(x, 0)); ring.append(pixel(x, h - 1)) }
+        for y in 0..<h { ring.append(pixel(0, y)); ring.append(pixel(w - 1, y)) }
+        func median(_ v: [Double]) -> Double { let s = v.sorted(); return s[s.count / 2] }
+        let paper = (median(ring.map(\.0)), median(ring.map(\.1)), median(ring.map(\.2)))
+        var ink: [(Double, Double, Double)] = []
+        for y in stride(from: 0, to: h, by: 1) { for x in stride(from: 0, to: w, by: 1) {
+            let p = pixel(x, y)
+            if abs(p.0 - paper.0) + abs(p.1 - paper.1) + abs(p.2 - paper.2) > 0.6 { ink.append(p) }
+        } }
+        ink.sort { $0.0 + $0.1 + $0.2 < $1.0 + $1.1 + $1.2 }
+        let dark = ink.prefix(max(1, ink.count / 5))
+        let color: NSColor = dark.isEmpty ? .black : NSColor(srgbRed: dark.map(\.0).reduce(0, +) / Double(dark.count), green: dark.map(\.1).reduce(0, +) / Double(dark.count),
+                                                           blue: dark.map(\.2).reduce(0, +) / Double(dark.count), alpha: 1)
+        return (NSColor(srgbRed: paper.0, green: paper.1, blue: paper.2, alpha: 1), color)
     }
 
     /// Placed images and drawings that can be moved, resized or deleted.
@@ -311,13 +347,28 @@ extension EditorModel {
         let pitch = original?.pitch ?? font.pointSize * 1.2
         let rects = original?.lineRects.map { $0.insetBy(dx: -0.5, dy: -0.5) } ?? []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Scanned text is pixels: cover the old line with the paper colour and write in the ink colour.
+        var patches: [CGRect] = [], paper = NSColor.white, ink = color
+        if let original, original.scanned {
+            let sample = ContentEditor.sampleColors(on: page, around: original.rect)
+            paper = sample.paper
+            if color == original.color { ink = sample.ink }
+            // Recognised boxes hug the letters loosely: cover ascenders and descenders generously.
+            patches = original.lineRects.map { CGRect(x: $0.minX - 2, y: $0.minY - $0.height * 0.3, width: $0.width + 4, height: $0.height * 1.75) }
+        }
         guard let newPage = ContentEditor.rewrite(page, edit: { content in
             guard !rects.isEmpty else { return }
             content.removeGlyphs { g in
                 g.upright && rects.contains { $0.contains(CGPoint(x: g.rect.midX, y: g.rect.midY)) }
             }
-        }, overlay: trimmed.isEmpty ? nil : { ctx in
-            ContentEditor.draw(text, font: font, color: color, origin: origin, width: width, box: box, pitch: pitch, alignment: alignment, in: ctx)
+        }, overlay: trimmed.isEmpty && patches.isEmpty ? nil : { ctx in
+            if !patches.isEmpty {
+                ctx.setFillColor(paper.cgColor)
+                patches.forEach { ctx.fill($0) }
+            }
+            if !trimmed.isEmpty {
+                ContentEditor.draw(text, font: font, color: ink, origin: origin, width: width, box: box, pitch: pitch, alignment: alignment, in: ctx)
+            }
         }) else {
             return Panels.alert("This text can't be edited", "The page content couldn't be rewritten.")
         }

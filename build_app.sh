@@ -14,6 +14,9 @@ fi
 VERSION=$(tr -d '[:space:]' < VERSION 2>/dev/null || echo 1.0.0)
 BUILD=${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}
 
+# The document conversion engine (shared with the Windows and Android apps) runs inside the app.
+(cd cross && { [[ -d node_modules ]] || npm ci --no-audit --no-fund; } && npm run --silent build:core)
+
 # UNIVERSAL=1 builds one binary for Apple Silicon and Intel.
 ARCH_FLAGS=()
 [[ ${UNIVERSAL:-0} == 1 ]] && ARCH_FLAGS=(--arch arm64 --arch x86_64)
@@ -23,6 +26,7 @@ APP="MK PDF.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MKPDF"
+cp cross/dist-core/core.js "$APP/Contents/Resources/core.js"
 
 ICONSET=$(mktemp -d)/AppIcon.iconset
 mkdir -p "$ICONSET"
@@ -65,5 +69,5 @@ PLIST
 
 # Ad-hoc signature (required to run on Apple Silicon). Set SIGN_IDENTITY to a Developer ID certificate
 # for a build Gatekeeper accepts without the right-click → Open step.
-codesign --force --deep --options runtime --sign "${SIGN_IDENTITY:--}" "$APP"
+codesign --force --deep --options runtime --entitlements MKPDF.entitlements --sign "${SIGN_IDENTITY:--}" "$APP"
 echo "Built $(pwd)/$APP (version $VERSION, build $BUILD)"

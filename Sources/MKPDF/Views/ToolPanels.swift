@@ -102,6 +102,21 @@ struct EditPanel: View {
         }
         .glassButton(prominent: true)
         .controlSize(.large)
+        if editor.tool == .editContent, editor.currentPageHasNoText {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("No editable text on this page", systemImage: "text.viewfinder").font(.headline)
+                Text("This page is a scanned image, or its text is drawn as shapes. Recognize the text to edit it in place: changes are painted over the original in matching size and colour.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button { editor.runOCR(pages: [editor.pageIndex], language: nil, accurate: true, skipTextPages: false) } label: {
+                    Label("Make This Page Editable", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+                }.glassButton(prominent: true)
+                Button { editor.runOCR(pages: nil, language: nil, accurate: true, skipTextPages: true) } label: {
+                    Text("All Scanned Pages").frame(maxWidth: .infinity)
+                }.glassButton()
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.accentColor.opacity(0.08)))
+        }
         if editor.tool == .editContent {
             Text("Click a paragraph to change its text. Drag a paragraph or image to move it; drag an image's corner to resize; press Delete to remove it. Double-click empty space to add text.")
                 .font(.callout).foregroundStyle(.secondary)

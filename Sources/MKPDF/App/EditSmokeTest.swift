@@ -7,6 +7,7 @@ import MKPDFCore
 enum EditSmokeTest {
     static func runIfRequested() {
         runFeatureTestIfRequested()
+        runScanTestIfRequested()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--edit-smoke-test"), args.count > i + 2 else { return }
         let input = URL(fileURLWithPath: args[i + 1]), output = URL(fileURLWithPath: args[i + 2])
@@ -47,6 +48,35 @@ enum EditSmokeTest {
 }
 
 extension EditSmokeTest {
+    /// `MKPDF --scan-edit-smoke-test in.pdf out.pdf "old words" "new text"` recognises page 1, edits the block
+    /// containing the old words like the editor does, saves, and writes out.png (the edited page).
+    static func runScanTestIfRequested() {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--scan-edit-smoke-test"), args.count > i + 4 else { return }
+        let output = URL(fileURLWithPath: args[i + 2])
+        guard let doc = PDFDocument(url: URL(fileURLWithPath: args[i + 1])), let page = doc.page(at: 0) else { print("can't open"); exit(1) }
+        do {
+            let lines = try OCR.recognize(page, language: nil, accurate: true)
+            print("recognised lines:", lines.count)
+            guard let composed = PageCompositor.compose(page, overlay: { OCR.drawInvisibleText(lines, in: $0) }) else { print("compose failed"); exit(1) }
+            doc.replacePage(at: 0, with: composed)
+            let editor = EditorModel(document: PDFFileDocument())
+            editor.document.pdf = doc
+            let blocks = ContentEditor.blocks(on: composed)
+            print("blocks:", blocks.count, "scanned:", blocks.filter(\.scanned).count)
+            guard let target = blocks.first(where: { $0.text.contains(args[i + 3]) }) else { print("no block with", args[i + 3]); exit(1) }
+            print("editing:", target.text, "size", target.font.pointSize)
+            editor.commitTextEdit(page: composed, original: target, text: target.text.replacingOccurrences(of: args[i + 3], with: args[i + 4]),
+                                  font: target.font, color: target.color, alignment: target.alignment,
+                                  at: CGPoint(x: target.rect.minX, y: target.firstBaseline), width: target.isMultiline ? target.rect.width + 2 : nil, box: target.rect.width)
+            try PDFExporter.data(for: doc).write(to: output)
+            if let edited = PDFDocument(url: output)?.page(at: 0), let img = PageRenderer.image(of: edited, dpi: 110) {
+                try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: output.deletingPathExtension().appendingPathExtension("png"))
+            }
+            exit(0)
+        } catch { print(error); exit(1) }
+    }
+
     /// `MKPDF --feature-smoke-test in.pdf outdir` writes Excel, PowerPoint, extracted images, a repaired copy,
     /// and checks the update version logic.
     static func runFeatureTestIfRequested() {

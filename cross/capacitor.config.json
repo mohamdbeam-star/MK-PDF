@@ -1,0 +1,12 @@
+{
+  "appId": "com.mkoussa.mkpdf",
+  "appName": "MK PDF",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#E7E5EC"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
