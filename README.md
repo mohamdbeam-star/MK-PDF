@@ -42,7 +42,7 @@ How it works: `Sources/MKPDFCore` parses each page's content stream and tracks t
 | Convert | Excel (tables become rows and columns) and PowerPoint (one slide per page), with optional OCR for scanned pages; extract embedded images (JPEGs saved unchanged) |
 | Repair | Rebuild every page of a damaged PDF through the content engine |
 | More | Split by file size or merge chosen ranges, image watermarks, place a signature or stamp on every page / all but last / a range, visual overlay compare, translate on-device, scan with iPhone (Continuity Camera), right-to-left two-page reading, arrow-key nudging, light/dark appearance, notifications when long tasks finish |
-| Updates | Checks GitHub Releases at launch and every six hours; shows a banner and a notification with *Download & Install* when a newer version is out |
+| Updates | Checks GitHub Releases at launch, every hour and whenever the app comes to the front; shows a banner and a notification. *Download & Install* replaces the app in place and restarts it (Mac: swaps the app bundle; Windows: silent per-user installer; Android: the system installer updates over the current app) |
 | Other | Full undo/redo, document properties, print, share |
 
 ## Install
@@ -53,7 +53,7 @@ From [Releases](https://github.com/mohamdbeam-star/MK-PDF/releases):
 - **Windows:** `MK-PDF-x.y.z-win-x64.exe` installs for the current user only, with no administrator rights. `MK-PDF-x.y.z-portable.exe` runs without installing. SmartScreen may warn about an unsigned app: choose **More info → Run anyway**.
 - **Android:** `MK-PDF-x.y.z-android.apk`. Open it on the phone; Android asks once to allow installs from your browser or files app.
 
-Every copy checks for a newer release at launch and every six hours, and offers to install it.
+Every copy checks for a newer release at launch, every hour and when it comes to the front, and installs it over itself: nothing to uninstall. On Android the first update asks once to allow MK PDF to install apps.
 
 ## Release (no Mac needed)
 

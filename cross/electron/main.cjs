@@ -1,5 +1,6 @@
 // MK PDF for Windows: an Electron shell around the web app in ../dist. Installs per user (no admin rights).
 const { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, Menu } = require('electron');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -160,15 +161,16 @@ ipcMain.handle('print', async (_e, data) => {
 ipcMain.on('open-external', (_e, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
 ipcMain.on('set-dirty', (_e, value) => { dirty = !!value; });
 
-// Updates: download the new installer to the temp folder, start it and quit (it installs per user, no admin).
+// Updates: download the new installer to the temp folder, run it silently and quit. It installs per user over this
+// copy (no admin, nothing to uninstall) and starts the new version when it's done (--force-run).
 ipcMain.handle('install-update', async (_e, url, name) => {
   if (!/^https:\/\/(github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)\//.test(url)) throw new Error('Unexpected update location');
   const res = await net.fetch(url);
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const file = path.join(os.tmpdir(), path.basename(name || 'MK-PDF-setup.exe'));
   fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-  const err = await shell.openPath(file);
-  if (err) throw new Error(err);
+  const child = spawn(file, ['--updated', '/S', '--force-run'], { detached: true, stdio: 'ignore' });
+  child.unref();
   dirty = false;
   setTimeout(() => app.quit(), 500);
 });

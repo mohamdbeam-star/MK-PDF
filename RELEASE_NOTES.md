@@ -1,11 +1,9 @@
-## What's new in MK PDF 1.3.4
+## What's new in MK PDF 1.3.5
 
-**Editing existing text (Mac)**
-- Text is now read from each font's own character map, so table rows and other text that couldn't be selected for editing before now can be. On the sample quotations, every table row is editable.
-- Table cells stay separate blocks: text no longer joins across a table's vertical lines ("Qty", "Unit Price" and "Total Amount" are three blocks, not one).
-- Ligatures such as "ﬁ" become plain letters when you retype a paragraph.
+**Updates install themselves**
+- MK PDF now checks for a new version every hour and whenever you switch to it, instead of every six hours, so you hear about a release soon after it's published.
+- **Mac:** *Download & Install* replaces the app in place and restarts it; no more dragging into Applications. Choose *When I Quit* to install the next time you quit. (Updating from 1.3.4 or earlier still opens the disk image once; from 1.3.5 on it's automatic.)
+- **Windows:** the installer runs silently over the current version and reopens MK PDF.
+- **Android:** a system notification says when an update is out, and *Install* downloads it and opens Android's installer, which updates the app without uninstalling. The first time, Android asks to allow MK PDF to install apps.
 
-**Word export (Mac)**
-- Uses the same text reading, so labels and cells that went missing in some PDFs are now included.
-
-Includes everything in 1.3.3: two-column documents export as columns, with whole words on justified lines.
+Includes everything in 1.3.4: text is read from the fonts for editing and Word export on Mac.

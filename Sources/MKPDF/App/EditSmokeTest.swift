@@ -17,6 +17,7 @@ enum EditSmokeTest {
         runFeatureTestIfRequested()
         runScanTestIfRequested()
         runEditCoverageIfRequested()
+        UpdateChecker.shared.runInstallTestIfRequested()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--edit-smoke-test"), args.count > i + 2 else { return }
         let input = URL(fileURLWithPath: args[i + 1]), output = URL(fileURLWithPath: args[i + 2])

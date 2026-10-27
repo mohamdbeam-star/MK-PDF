@@ -69,6 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
+    // An update downloaded with "When I Quit" replaces the app once it has quit.
+    func applicationWillTerminate(_ notification: Notification) {
+        UpdateChecker.shared.installStagedUpdate(relaunch: false)
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // The home window takes the place of the Open panel macOS shows for document apps at launch.
         UserDefaults.standard.set(false, forKey: "NSShowAppCentricOpenPanelInsteadOfUntitledFile")

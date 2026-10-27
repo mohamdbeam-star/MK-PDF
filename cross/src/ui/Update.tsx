@@ -13,8 +13,10 @@ export function isNewer(a: string, b: string) {
 }
 
 /** Looks for the newest release carrying this platform's installer. */
+let lastCheck = 0;
 export async function checkForUpdates(userInitiated = false) {
   if (platform.kind === 'web') return;
+  lastCheck = Date.now();
   try {
     const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { Accept: 'application/vnd.github+json' } });
     const list = (await r.json()) as { tag_name: string; html_url: string; body: string; draft: boolean; prerelease: boolean; assets: { name: string; browser_download_url: string }[] }[];
@@ -34,9 +36,13 @@ export async function checkForUpdates(userInitiated = false) {
   }
 }
 
+/** Checks shortly after launch, every hour, and whenever the app comes back to the front (at most every 15 minutes). */
 export function startUpdateChecks() {
   setTimeout(() => checkForUpdates(false), 4000);
-  setInterval(() => checkForUpdates(false), 6 * 3600 * 1000);
+  setInterval(() => checkForUpdates(false), 3600 * 1000);
+  const soon = () => { if (document.visibilityState === 'visible' && Date.now() - lastCheck > 15 * 60 * 1000) void checkForUpdates(false); };
+  document.addEventListener('visibilitychange', soon);
+  window.addEventListener('focus', soon);
 }
 
 export function UpdateBanner() {
@@ -47,8 +53,11 @@ export function UpdateBanner() {
       <b>MK PDF {u.version} is available</b><span class="muted">You have {platform.version}</span>
       <span class="grow" />
       <button class="link" onClick={() => platform.openExternal(u.page)}>What's new</button>
-      <button class="glass-btn prominent small" onClick={async () => { showToast('Downloading the update…'); await platform.installUpdate(u.asset, u.name); }}>
-        {platform.kind === 'android' ? 'Download' : 'Download & Install'}
+      <button class="glass-btn prominent small" onClick={async () => {
+        showToast('Downloading the update…');
+        try { await platform.installUpdate(u.asset, u.name); } catch (e) { showToast(e instanceof Error ? e.message : String(e)); }
+      }}>
+        {platform.kind === 'android' ? 'Install' : 'Download & Install'}
       </button>
       <button class="icon-btn" title="Skip this version" onClick={() => { localStorage.setItem('mkpdf.skip', u.version); update.value = null; }}>✕</button>
     </div>

@@ -99,6 +99,7 @@ async function android(): Promise<Platform> {
   const { App } = await import('@capacitor/app');
   const { registerPlugin } = await import('@capacitor/core');
   const OpenFile = registerPlugin<{ addListener(e: 'open', cb: (f: { name: string; path: string }) => void): Promise<unknown> }>('OpenFile');
+  const Updater = registerPlugin<{ install(o: { url: string }): Promise<void>; notify(o: { title: string; body: string }): Promise<void> }>('Updater');
   const toB64 = (b: Uint8Array) => { let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); };
   const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const write = async (dir: string, name: string, bytes: Uint8Array, directory: (typeof Directory)[keyof typeof Directory]) => {
@@ -135,8 +136,9 @@ async function android(): Promise<Platform> {
     },
     onOpenFile(cb) { listeners.push(cb); pending.splice(0).forEach(cb); },
     openExternal: (url) => { window.open(url, '_system'); },
-    async installUpdate(url) { window.open(url, '_system'); },
-    notify: () => {},
+    // Downloads the APK and opens Android's installer, which updates this app in place.
+    async installUpdate(url) { await Updater.install({ url }); },
+    notify: (title, body) => { void Updater.notify({ title, body }).catch(() => {}); },
     confirmClose() { App.addListener('backButton', ({ canGoBack }) => { if (!canGoBack) App.minimizeApp(); else history.back(); }); },
   };
 }
