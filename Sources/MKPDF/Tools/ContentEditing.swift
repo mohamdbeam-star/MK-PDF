@@ -29,13 +29,19 @@ enum ContentEditor {
         let baseFonts = Dictionary(content.shows.map { ($0.fontResource, $0.baseFont) }, uniquingKeysWith: { a, _ in a })
         let glyphs = content.glyphs.filter { $0.upright && $0.rect.width > 0.05 && $0.size > 0.5 }
 
+        // A table's vertical lines separate cells: text never joins across one.
+        let walls = content.rules.filter { $0.height > $0.width * 3 && $0.height > 4 }
+        func walled(_ a: Glyph, _ b: Glyph) -> Bool {
+            let x0 = min(a.rect.maxX, b.rect.minX) - 0.5, x1 = max(a.rect.maxX, b.rect.minX) + 0.5, y = (a.rect.midY + b.rect.midY) / 2
+            return walls.contains { $0.midX > x0 && $0.midX < x1 && $0.minY <= y && $0.maxY >= y }
+        }
         // Glyphs → lines: same baseline, moving right, no column-sized gap.
         var lines: [[Glyph]] = []
         for g in glyphs {
             if let prev = lines.last?.last,
                abs(g.origin.y - prev.origin.y) < max(1, prev.size * 0.25),
                g.rect.minX >= prev.rect.minX - 0.5,
-               g.rect.minX - prev.rect.maxX < max(prev.size, g.size) * 1.1 {
+               g.rect.minX - prev.rect.maxX < max(prev.size, g.size) * 1.1, !walled(prev, g) {
                 lines[lines.count - 1].append(g)
             } else {
                 lines.append([g])
@@ -49,7 +55,7 @@ enum ContentEditor {
                 for j in lines.indices where i != j {
                     guard let a = lines[i].last, let b = lines[j].first else { continue }
                     if abs(a.origin.y - b.origin.y) < max(1, a.size * 0.25), b.rect.minX >= a.rect.maxX - 1,
-                       b.rect.minX - a.rect.maxX < max(a.size, b.size) * 1.1 {
+                       b.rect.minX - a.rect.maxX < max(a.size, b.size) * 1.1, !walled(a, b) {
                         lines[i] += lines[j]
                         lines.remove(at: j)
                         merged = true
@@ -59,7 +65,7 @@ enum ContentEditor {
             }
         }
 
-        struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor?; var invisible: Bool }
+        struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor?; var invisible: Bool; var glyphs: [Glyph] }
         let lineInfo: [Line] = lines.compactMap { gs in
             let visible = gs.filter { $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) && $0.bytes != Data([0, 32]) }
             guard !visible.isEmpty else { return nil }
@@ -67,8 +73,9 @@ enum ContentEditor {
             let sizes = visible.map(\.size).sorted()
             return Line(rect: rect, baseline: visible[0].origin.y, size: CGFloat(sizes[sizes.count / 2]),
                         font: baseFonts[visible[0].fontResource] ?? "", resource: visible[0].fontResource, color: visible[0].color,
-                        invisible: visible.allSatisfy(\.invisible))
+                        invisible: visible.allSatisfy(\.invisible), glyphs: gs)
         }
+        func decoded(_ line: Line) -> String? { content.string(of: line.glyphs) }
 
         // Lines → paragraphs: evenly spaced, similar size, aligned.
         var groups: [[Line]] = []
@@ -92,10 +99,13 @@ enum ContentEditor {
             var texts: [String] = []
             var attributes: [NSAttributedString.Key: Any] = [:]
             for line in group {
+                let own = decoded(line)
+                if let own { texts.append(own) }
+                if own != nil && (!attributes.isEmpty || group[0].color != nil) { continue }
                 let probe = line.rect.insetBy(dx: -0.5, dy: line.rect.height * 0.25)
                 guard let sel = page.selection(for: probe) else { continue }
                 let s = (sel.string ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                if !s.isEmpty { texts.append(s) }
+                if own == nil, !s.isEmpty { texts.append(s) }
                 if attributes.isEmpty, let attr = sel.attributedString, attr.length > 0 {
                     let i = (attr.string.firstIndex { !$0.isWhitespace }).map { attr.string.distance(from: attr.string.startIndex, to: $0) } ?? 0
                     attributes = attr.attributes(at: min(i, attr.length - 1), effectiveRange: nil)

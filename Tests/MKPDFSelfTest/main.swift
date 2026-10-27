@@ -191,5 +191,19 @@ if let page = cgPage(handWrittenPDF()) {
     }
 }
 
+print("Text read from the fonts (ToUnicode maps, encodings)")
+if let page = cgPage(quartzPDF()) {
+    let content = PageContent(page: page)
+    check(content.string(in: CGRect(x: 60, y: 695, width: 500, height: 12)) == "Quarterly report draft for review", "ToUnicode text of a Quartz PDF")
+    check(content.string(in: CGRect(x: 60, y: 666, width: 500, height: 10)) == "Total amount due: 5,400 AED", "punctuation and digits")
+    check(content.string(in: CGRect(x: 60, y: 596, width: 500, height: 10)) == nil, "right-to-left text is left to PDFKit")
+}
+if let page = cgPage(handWrittenPDF()) {
+    let content = PageContent(page: page)
+    check(content.string(in: CGRect(x: 60, y: 698, width: 500, height: 10)) == "Invoice number 1234 is secret data", "WinAnsi simple font without a ToUnicode map")
+    check(content.string(in: CGRect(x: 60, y: 398, width: 500, height: 8)) == "Courier text stays", "standard encoding")
+    check(content.string(in: CGRect(x: 60, y: 658, width: 500, height: 8))?.hasPrefix("Kerned words") == true, "a wide TJ gap is a word space")
+}
+
 print(failures == 0 ? "\nAll checks passed" : "\n\(failures) check(s) failed")
 exit(failures == 0 ? 0 : 1)

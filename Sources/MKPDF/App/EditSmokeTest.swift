@@ -16,6 +16,7 @@ enum EditSmokeTest {
         }
         runFeatureTestIfRequested()
         runScanTestIfRequested()
+        runEditCoverageIfRequested()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--edit-smoke-test"), args.count > i + 2 else { return }
         let input = URL(fileURLWithPath: args[i + 1]), output = URL(fileURLWithPath: args[i + 2])
@@ -120,6 +121,45 @@ extension EditSmokeTest {
         print("newer 1.10.0>1.9.2:", UpdateChecker.isNewer("1.10.0", than: "1.9.2"), " 1.1.0>1.1.0:", UpdateChecker.isNewer("1.1.0", than: "1.1.0"))
         let sample = #"{"tag_name":"v1.2.0","html_url":"https://github.com/x/y/releases/tag/v1.2.0","body":"Notes","assets":[{"name":"MK-PDF-1.2.0.dmg","browser_download_url":"https://github.com/x/y/releases/download/v1.2.0/MK-PDF-1.2.0.dmg"}]}"#
         print("parsed:", UpdateChecker.parse(Data(sample.utf8)).map { "\($0.version) \($0.dmg?.lastPathComponent ?? "-")" } ?? "nil")
+        exit(0)
+    }
+}
+
+extension EditSmokeTest {
+    /// `MKPDF --edit-coverage a.pdf b.pdf …`: for each page, how much of the page's text Edit Text & Images offers as
+    /// editable blocks, with a sample of the words it misses (debug aid for the block finder).
+    static func runEditCoverageIfRequested() {
+        let args = CommandLine.arguments
+        // `--edit-blocks file.pdf page`: lists the editable blocks of one page.
+        if let i = args.firstIndex(of: "--edit-blocks"), args.count > i + 2, let doc = PDFDocument(url: URL(fileURLWithPath: args[i + 1])),
+           let page = doc.page(at: (Int(args[i + 2]) ?? 1) - 1) {
+            for b in ContentEditor.blocks(on: page) {
+                print(String(format: "(%.0f,%.0f %.0fx%.0f) %.1fpt lines:%d  %@", b.rect.minX, b.rect.minY, b.rect.width, b.rect.height, b.font.pointSize, b.lineRects.count, String(b.text.prefix(70))))
+            }
+            exit(0)
+        }
+        guard let i = args.firstIndex(of: "--edit-coverage") else { return }
+        func words(_ s: String) -> [String] { s.split(whereSeparator: { $0.isWhitespace }).map(String.init) }
+        for path in args[(i + 1)...] {
+            guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else { print("can't open \(path)"); continue }
+            var total = 0, found = 0, lines: [String] = []
+            for p in 0..<min(doc.pageCount, 20) {
+                guard let page = doc.page(at: p), let ref = page.pageRef else { continue }
+                let glyphs = PageContent(page: ref).glyphs.filter { !$0.invisible && $0.rect.width > 0.05 && $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) && $0.bytes != Data([0, 32]) }
+                guard !glyphs.isEmpty else { continue }
+                let rects = ContentEditor.blocks(on: page).flatMap(\.lineRects).map { $0.insetBy(dx: -1, dy: -1) }
+                let missed = glyphs.filter { g in !rects.contains { $0.contains(CGPoint(x: g.rect.midX, y: g.rect.midY)) } }
+                total += glyphs.count; found += glyphs.count - missed.count
+                let share = Double(glyphs.count - missed.count) / Double(glyphs.count)
+                if share < 0.97 {
+                    let upright = missed.filter(\.upright).count
+                    let where_ = missed.prefix(6).map { String(format: "(%.0f,%.0f %@)", $0.rect.minX, $0.rect.minY, page.selection(for: $0.rect.insetBy(dx: -0.5, dy: -0.5))?.string ?? "?") }
+                    lines.append(String(format: "   p%d %3.0f%%  missed %d (%d upright)  %@", p + 1, share * 100, missed.count, upright, where_.joined(separator: " ")))
+                }
+            }
+            print(String(format: "%3.0f%%  %@", total == 0 ? 100 : Double(found) / Double(total) * 100, (path as NSString).lastPathComponent))
+            lines.prefix(4).forEach { print($0) }
+        }
         exit(0)
     }
 }

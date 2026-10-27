@@ -52,6 +52,7 @@ final class FontMetrics {
     private let scale: Double
     let ascent: Double
     let descent: Double
+    let text: FontText
     private var fallback: CTFont?
 
     init(_ font: CGPDFDictionaryRef) {
@@ -107,6 +108,7 @@ final class FontMetrics {
         baseFont = base
         defaultWidth = dw
         scale = sc
+        text = FontText(font, subtype: subtype, baseFont: base, bytesPerCode: bytesPerCode)
 
         var asc: CGPDFReal = 0, desc: CGPDFReal = 0
         if let descriptor {
@@ -389,6 +391,16 @@ public final class PageContent {
         var fill: CGColor? = CGColor(gray: 0, alpha: 1)
         var renderMode = 0
     }
+
+    /// The text a glyph stands for, from its font's ToUnicode map or encoding; nil when the font doesn't say.
+    public func text(of glyph: Glyph) -> String? {
+        guard let f = font(glyph.fontResource) else { return nil }
+        let code = glyph.bytes.reduce(0) { $0 << 8 | Int($1) }
+        return f.text.text(code)
+    }
+
+    /// True when the glyph's font maps codes to text at all (otherwise callers need another source, like PDFKit).
+    public func knowsText(of glyph: Glyph) -> Bool { font(glyph.fontResource).map { !$0.text.unknown } ?? false }
 
     private func font(_ name: String) -> FontMetrics? {
         if let f = fonts[name] { return f }

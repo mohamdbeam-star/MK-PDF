@@ -1,9 +1,11 @@
 import AppKit
 import JavaScriptCore
 import PDFKit
+import MKPDFCore
 
 /// Runs the conversion core shared with the Windows and Android apps (`cross/src/core`, bundled as core.js)
-/// in JavaScriptCore. PDFKit supplies the text in any rect of a page; pictures are drawn natively on request.
+/// in JavaScriptCore. The text in any rect of a page is read from the glyphs' fonts (PDFKit where a font doesn't say);
+/// pictures are drawn natively on request.
 enum CoreConverter {
     struct Failure: LocalizedError { let errorDescription: String? }
 
@@ -44,9 +46,13 @@ enum CoreConverter {
             guard let page = copy.page(at: index) else { return nil }
             return TextlessRender.jpeg(page, dpi: 150, keepText: keepText)?.base64EncodedString()
         }
-        // PDFKit's text in a rect (logical order, with the spaces it infers from gaps), as the native writers used.
+        // The glyphs' own text in a rect; PDFKit's (logical order, with the spaces it infers) where a font doesn't map
+        // its codes or the text is right-to-left. PDFKit can place a page's text a little off, so it comes second.
+        var contents: [Int: PageContent] = [:]
         let textIn: @convention(block) (Int, Double, Double, Double, Double) -> String? = { index, x, y, w, h in
             guard let page = copy.page(at: index) else { return nil }
+            if contents[index] == nil, let ref = page.pageRef { contents[index] = PageContent(page: ref) }
+            if let own = contents[index]?.string(in: CGRect(x: x, y: y, width: w, height: h)) { return own }
             // PDFKit marks pictures (U+FFFC) and unmapped glyphs with placeholder characters; they're not text.
             guard let s = page.selection(for: CGRect(x: x, y: y, width: w, height: h))?.string else { return nil }
             return String(String.UnicodeScalarView(s.unicodeScalars.filter { !($0.value == 0xFFFC || $0.value == 0xFFFD || (0xE000...0xF8FF).contains($0.value)) }))

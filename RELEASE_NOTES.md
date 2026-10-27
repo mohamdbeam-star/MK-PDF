@@ -1,9 +1,11 @@
-## What's new in MK PDF 1.3.3
+## What's new in MK PDF 1.3.4
 
-**Word export of two-column documents** (contracts, terms and conditions)
-- Pages set in two columns are now exported as two columns, each read top to bottom. Before, lines from the left and right columns were mixed together line by line.
-- Section headings stay with their own column and title ("17. Nature of the Agreement" no longer splits into "17." and a stray title).
-- Justified lines keep their last word whole on Windows and Android ("is and remain" no longer becomes "is a remain"), and a space is kept between a normal word and a bold word that follows it ("this Agreement", not "thisAgreement").
-- Tables without vertical lines (label and value rows) and forms with full-width section bars are not mistaken for columns.
+**Editing existing text (Mac)**
+- Text is now read from each font's own character map, so table rows and other text that couldn't be selected for editing before now can be. On the sample quotations, every table row is editable.
+- Table cells stay separate blocks: text no longer joins across a table's vertical lines ("Qty", "Unit Price" and "Total Amount" are three blocks, not one).
+- Ligatures such as "ﬁ" become plain letters when you retype a paragraph.
 
-Includes everything in 1.3.2: no empty extra page in Word, and lines that belong to a box stay with the box.
+**Word export (Mac)**
+- Uses the same text reading, so labels and cells that went missing in some PDFs are now included.
+
+Includes everything in 1.3.3: two-column documents export as columns, with whole words on justified lines.

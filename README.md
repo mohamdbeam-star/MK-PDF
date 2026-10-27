@@ -17,7 +17,7 @@ An app for viewing, editing, signing, organizing and converting PDFs, for **Mac,
 
 - **Scanned pages and drawings.** Pages with no real text show *Make This Page Editable*. Offline OCR recognizes the text; editing a line then paints over the old pixels in the paper colour and writes the new text in the ink colour.
 
-How it works: `Sources/MKPDFCore` parses each page's content stream and tracks the graphics and text state so every glyph and image has a position. It rewrites text-showing operators glyph by glyph, keeping the spacing of what remains. It then writes a new page that reuses the original fonts, images and other resources, so nothing is rasterized.
+How it works: `Sources/MKPDFCore` parses each page's content stream and tracks the graphics and text state so every glyph and image has a position. Each glyph's text is read from its font (the ToUnicode map, else the encoding and glyph names), so tables and other text that PDFKit places off its glyphs are still found; PDFKit is used only for right-to-left text and fonts that don't say what their codes mean. It rewrites text-showing operators glyph by glyph, keeping the spacing of what remains. It then writes a new page that reuses the original fonts, images and other resources, so nothing is rasterized.
 
 ## Everything else
 
@@ -99,6 +99,8 @@ npx tsx scripts/export.mts in.pdf out.docx # convert with the shared engine (any
 swift run MKPDFSelfTest                    # content engine checks
 swift run MKPDFSelfTest some.pdf other.pdf # round-trip and word removal on your own files
 swift build --product MKPDF && .build/debug/MKPDF --edit-smoke-test in.pdf out.pdf
+.build/debug/MKPDF --edit-coverage a.pdf b.pdf   # share of each file's text offered as editable blocks
+.build/debug/MKPDF --edit-blocks in.pdf 3        # the editable blocks found on page 3
 .build/debug/MKPDF --feature-smoke-test in.pdf outdir   # Excel, PowerPoint, images, every batch tool, update logic
 .build/debug/MKPDF --scan-edit-smoke-test scan.pdf out.pdf "old words" "new words"  # OCR, edit and repaint a scan
 ```
