@@ -46,7 +46,10 @@ export async function addTextLayer(doc: PDFDocument, results: Map<number, OcrLin
     for (const l of lines) {
       const font = await fontFor(doc, { family: 'Helvetica', bold: false, italic: false, text: l.text });
       const key = page.node.newFontDictionary(hasArabic(l.text) ? 'MKOcrA' : 'MKOcr', font.ref);
-      const size = l.h * 0.85;
+      // The size that fills the line's width (as on the Mac): a box's height swings with ascenders and descenders,
+      // so it only bounds sizes far off it. Edited text then matches the scan's own size.
+      const perPoint = font.widthOfTextAtSize(l.text, 1);
+      const size = Math.min(l.h * 1.15, Math.max(l.h * 0.5, perPoint > 0 ? l.w / perPoint : l.h * 0.85));
       const natural = font.widthOfTextAtSize(l.text, size) || 1;
       page.pushOperators(
         beginText(), setFontAndSize(key, size), setTextRenderingMode(TextRenderingMode.Invisible),

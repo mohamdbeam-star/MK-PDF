@@ -150,7 +150,7 @@ struct BatchJob {
             try data.write(to: URL(fileURLWithPath: base.path + " compressed.pdf"))
         case .ocr:
             let lines = try await background { try pdf.pages.map { page -> [OCR.Line] in
-                (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? try OCR.recognize(page, language: nil, accurate: true) : []
+                !page.hasContentText ? try OCR.recognize(page, language: nil, accurate: true) : []
             } }
             editor.transformPages("OCR") { page, i in
                 lines[i].isEmpty ? nil : PageCompositor.compose(page) { OCR.drawInvisibleText(lines[i], in: $0) }

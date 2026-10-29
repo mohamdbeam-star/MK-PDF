@@ -144,14 +144,20 @@ enum ContentEditor {
                 text += t.text
             }
             guard !text.isEmpty else { return nil }
-            let size = group[0].size
+            let scanned = group.allSatisfy(\.invisible)
+            // Each recognised line is sized to fill its own width, so a recognised paragraph takes its smallest line's
+            // size (within reason): with the first line's, slightly smaller lines would no longer fit and edits would
+            // wrap a word early.
+            let sizes = group.map(\.size).sorted()
+            let size = scanned && group.count > 1 ? max(sizes[0], sizes[sizes.count / 2] * 0.92) : group[0].size
             let font = FontResolver.font(baseFont: group[0].font, embedded: { content.fontProgram(for: group[0].resource) },
                                          size: size, sample: text)
             let color = group[0].color.flatMap { NSColor(cgColor: $0) } ?? (attributes[.foregroundColor] as? NSColor) ?? .black
             let pitch = group.count > 1 ? (group[0].baseline - group[1].baseline) : size * 1.2
             let rect = group.reduce(CGRect.null) { $0.union($1.rect) }
-            let centered = group.count > 1 && group.allSatisfy { abs($0.rect.midX - rect.midX) < size } && !group.allSatisfy { abs($0.rect.minX - rect.minX) < 1 }
-            let scanned = group.allSatisfy(\.invisible)
+            // Recognised lines start a point or two apart even when the scan's paragraph is set flush left.
+            let flush = scanned ? max(2, size * 0.4) : 1
+            let centered = group.count > 1 && group.allSatisfy { abs($0.rect.midX - rect.midX) < size } && !group.allSatisfy { abs($0.rect.minX - rect.minX) < flush }
             // The table cell around the block, from the nearest vertical lines on each side.
             var cell: CGRect?
             let sides = walls.filter { $0.minY <= rect.midY && $0.maxY >= rect.midY }

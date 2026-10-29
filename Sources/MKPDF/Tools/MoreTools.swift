@@ -145,7 +145,7 @@ extension EditorModel {
     /// Hands `use` a copy of the document, running OCR first on pages with no text when `ocr` is set.
     func withSearchableCopy(ocr: Bool, _ use: @escaping (PDFDocument) -> Void) {
         guard let copy = PDFExporter.copy(of: pdf) else { return }
-        let scanned = copy.pages.enumerated().filter { ($0.element.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.offset)
+        let scanned = copy.pages.enumerated().filter { !$0.element.hasContentText }.map(\.offset)
         guard ocr, !scanned.isEmpty else { return use(copy) }
         // Rotated scans are recognised upright, so their text runs the way the page is read.
         for i in scanned { if let page = copy.page(at: i), page.rotation % 360 != 0 { copy.replacePage(at: i, with: PageCompositor.upright(page)) } }

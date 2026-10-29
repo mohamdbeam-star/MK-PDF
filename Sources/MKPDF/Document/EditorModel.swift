@@ -213,8 +213,15 @@ final class EditorModel: ObservableObject {
     /// The page shown has no text at all (a scan, or text drawn as shapes): only recognition makes it editable.
     var currentPageHasNoText: Bool {
         guard let page = pdf.page(at: min(pageIndex, max(0, pageCount - 1))) else { return false }
-        return (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if textCheckRevision != document.revision { pagesWithText.removeAllObjects(); textCheckRevision = document.revision }
+        if let known = pagesWithText.object(forKey: page) { return !known.boolValue }
+        let hasText = page.hasContentText
+        pagesWithText.setObject(NSNumber(value: hasText), forKey: page)
+        return !hasText
     }
+    /// `hasContentText` per page, cleared on every edit (the panel asks on each redraw).
+    private let pagesWithText = NSMapTable<PDFPage, NSNumber>.weakToStrongObjects()
+    private var textCheckRevision = -1
 
     var currentPage: PDFPage? { pdfView?.currentPage ?? pdf.page(at: min(pageIndex, max(0, pageCount - 1))) }
     var documentName: String { fileURL?.baseName ?? "Untitled" }
@@ -697,6 +704,9 @@ final class EditorModel: ObservableObject {
         let oldPage = pageIndex
         selectedAnnotation = nil
         document.pdf = new
+        // The view takes the new document now, not on SwiftUI's next update: going to one of its pages while the view
+        // still shows the old document leaves it with no current page, and clicks then find no page under them.
+        pdfView?.show(new)
         changed()
         go(to: min(oldPage, new.pageCount - 1))
         registerUndo(name) { $0.replaceDocument(with: old, name: name) }

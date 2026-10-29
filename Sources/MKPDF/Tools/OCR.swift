@@ -95,11 +95,13 @@ enum OCR {
         ctx.setTextDrawingMode(.invisible)
         for line in lines where line.rect.width > 1 && line.rect.height > 1 {
             // The size that fills the recognised width: boxes are taller or shorter with brackets and descenders,
-            // but the width of a line of text follows its size closely.
+            // but the width of a line of text follows its size closely. A recognised box is about 0.9 of the type size
+            // tall, so the height only limits sizes far off it (short words, wide tracking); a lower cap made edited
+            // text visibly smaller than the scan around it.
             let unit = CTLineCreateWithAttributedString(NSAttributedString(string: line.text, attributes: [.font: CTFontCreateWithName("Helvetica" as CFString, 1, nil)]))
             let perPoint = CTLineGetTypographicBounds(unit, nil, nil, nil)
-            let fitted = perPoint > 0 ? line.rect.width / CGFloat(perPoint) : line.rect.height * 0.85
-            let font = CTFontCreateWithName("Helvetica" as CFString, min(line.rect.height * 0.9, max(line.rect.height * 0.5, fitted)), nil)
+            let fitted = perPoint > 0 ? line.rect.width / CGFloat(perPoint) : line.rect.height
+            let font = CTFontCreateWithName("Helvetica" as CFString, min(line.rect.height * 1.15, max(line.rect.height * 0.5, fitted)), nil)
             let attributed = NSAttributedString(string: line.text, attributes: [.font: font])
             let ctLine = CTLineCreateWithAttributedString(attributed)
             let width = CTLineGetTypographicBounds(ctLine, nil, nil, nil)
@@ -120,7 +122,7 @@ extension EditorModel {
         guard let copy = PDFExporter.copy(of: pdf) else { return }
         let targets = (pages ?? Array(0..<copy.pageCount)).filter { i in
             guard let page = copy.page(at: i) else { return false }
-            return !skipTextPages || (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !skipTextPages || !page.hasContentText
         }
         guard !targets.isEmpty else {
             return Panels.alert("Nothing to recognize", "All selected pages already contain text.")

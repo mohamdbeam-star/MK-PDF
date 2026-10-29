@@ -75,6 +75,14 @@ final class MKPDFView: PDFView {
         editor.didModify(a, from: AnnotationState(a), name: "Fill Form")
     }
 
+    /// Shows a new version of the document (after recognition, repair, page operations…).
+    func show(_ pdf: PDFDocument) {
+        guard document !== pdf else { return }
+        cancelSession()
+        document = pdf
+        highlightedSelections = nil
+    }
+
     func toolDidChange() {
         drag = nil
         if editor?.tool != .editContent {
@@ -364,11 +372,7 @@ struct PDFKitView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MKPDFView, context: Context) {
-        if view.document !== document.pdf {
-            view.cancelSession()
-            view.document = document.pdf
-            view.highlightedSelections = nil
-        }
+        view.show(document.pdf)
         view.applyNightMode(editor.nightMode)
         view.overlay.needsDisplay = true
     }

@@ -183,6 +183,14 @@ enum PageRenderer {
 extension PDFPage {
     var normalizedRotation: Int { ((rotation % 360) + 360) % 360 }
 
+    /// The page's own content draws text. Read from the content stream, not `string`: once a scan is on screen,
+    /// macOS adds the text it recognises in the picture to `string`, though the file has no text to edit or export.
+    var hasContentText: Bool {
+        guard let ref = pageRef else { return false }
+        let content = PageContent(page: ref)
+        return content.glyphs.contains { !content.isBlank($0) }
+    }
+
     /// Page size as it appears on screen (rotation applied).
     var displaySize: CGSize {
         let crop = bounds(for: .cropBox)
