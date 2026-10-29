@@ -52,11 +52,19 @@ enum CoreConverter {
         let textIn: @convention(block) (Int, Double, Double, Double, Double) -> String? = { index, x, y, w, h in
             guard let page = copy.page(at: index) else { return nil }
             if contents[index] == nil, let ref = page.pageRef { contents[index] = PageContent(page: ref) }
-            if let own = contents[index]?.string(in: CGRect(x: x, y: y, width: w, height: h)) { return own }
+            let rect = CGRect(x: x, y: y, width: w, height: h)
+            if let own = contents[index]?.string(in: rect) { return own }
             // PDFKit marks pictures (U+FFFC) and unmapped glyphs with placeholder characters; they're not text.
-            guard let s = page.selection(for: CGRect(x: x, y: y, width: w, height: h))?.string else { return nil }
-            return String(String.UnicodeScalarView(s.unicodeScalars.filter { !($0.value == 0xFFFC || $0.value == 0xFFFD || (0xE000...0xF8FF).contains($0.value)) }))
+            let s = String(String.UnicodeScalarView((page.selection(for: rect)?.string ?? "").unicodeScalars.filter { !($0.value == 0xFFFC || $0.value == 0xFFFD || (0xE000...0xF8FF).contains($0.value)) }))
                 .replacingOccurrences(of: "\n", with: " ")
+            // PDFKit's text is believable when it has about as many letters as there are glyphs; otherwise (fonts whose
+            // letters have no character codes) the area is read from its rendering.
+            let shown = contents[index]?.glyphsWithoutOverprint.filter { g in
+                rect.contains(CGPoint(x: g.rect.midX, y: g.rect.midY)) && !g.invisible && !(contents[index]?.isBlank(g) ?? false)
+            }.count ?? 0
+            let letters = s.filter { !$0.isWhitespace }.count
+            if shown > 0, abs(letters - shown) > max(2, shown / 4), rect.height < 60, let read = OCR.text(of: page, in: rect) { return read }
+            return s.isEmpty ? nil : s
         }
         ctx.setObject(textIn, forKeyedSubscript: "nativeTextIn" as NSString)
         ctx.setObject(render, forKeyedSubscript: "nativeRender" as NSString)

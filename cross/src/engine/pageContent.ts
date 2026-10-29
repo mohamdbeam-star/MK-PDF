@@ -60,13 +60,14 @@ export interface Glyph {
   fontResource: string;
   color: [number, number, number] | null; // RGB 0…1
   invisible: boolean;     // render mode 3/7 (OCR text layers)
+  blank?: boolean;        // a space (code 32, or a composite font's space code its ToUnicode map doesn't call a letter)
 }
 
 export interface TextShow { opIndex: number; glyphs: Glyph[]; fontSize: number; hScale: number; fontResource: string; baseFont: string }
 
 export interface GraphicObject { kind: 'image' | 'form' | 'inline'; opIndex: number; name: string; ctm: Matrix; bounds: Rect }
 
-const isSpace = (g: Glyph) => (g.bytes.length === 1 && g.bytes[0] === 32) || (g.bytes.length === 2 && g.bytes[0] === 0 && (g.bytes[1] === 3 || g.bytes[1] === 32));
+const isSpace = (g: Glyph) => g.blank ?? ((g.bytes.length === 1 && g.bytes[0] === 32) || (g.bytes.length === 2 && g.bytes[0] === 0 && (g.bytes[1] === 3 || g.bytes[1] === 32)));
 export { isSpace };
 
 function lookupDict(d: PDFDict | undefined, key: string): PDFDict | undefined {
@@ -90,12 +91,32 @@ export function streamBytes(s: PDFStream): Uint8Array {
 }
 
 /** Glyph widths and vertical metrics for one font resource. */
+/** What a ToUnicode CMap maps `code` to (bfchar entries and bfranges), or undefined when it doesn't say. */
+function cmapText(cmap: string, code: number): string | undefined {
+  const utf16 = (hex: string) => { const u: number[] = []; for (let i = 0; i + 4 <= hex.length; i += 4) u.push(parseInt(hex.slice(i, i + 4), 16)); return String.fromCharCode(...u); };
+  for (const block of cmap.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
+    for (const m of block[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]*)>/g)) if (parseInt(m[1], 16) === code) return utf16(m[2]);
+  }
+  for (const block of cmap.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
+    for (const m of block[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<([0-9a-fA-F]+)>|\[([^\]]*)\])/g)) {
+      const lo = parseInt(m[1], 16), hi = parseInt(m[2], 16);
+      if (code < lo || code > hi) continue;
+      if (m[4] !== undefined) { const s = utf16(m[4]); return s.slice(0, -1) + String.fromCharCode(s.charCodeAt(s.length - 1) + code - lo); }
+      const list = [...(m[5] ?? '').matchAll(/<([0-9a-fA-F]*)>/g)];
+      return list[code - lo] ? utf16(list[code - lo][1]) : undefined;
+    }
+  }
+  return undefined;
+}
+
 class FontMetrics {
   bytesPerCode: number;
   baseFont: string;
   ascent = 0.8;
   descent = -0.2;
   private widths = new Map<number, number>();
+  /** Codes 3 and 32 of a composite font that its ToUnicode map says are letters, not spaces (some Arabic fonts). */
+  notBlank = new Set<number>();
   private defaultWidth = 0;
   private scale = 0.001;
   private standard?: StandardFontEmbedder;
@@ -114,6 +135,12 @@ class FontMetrics {
         descriptor = lookupDict(cid, 'FontDescriptor');
         const w = cid.lookup(PDFName.of('W'));
         if (w instanceof PDFArray) this.cidWidths(w);
+      }
+      const map = font.lookup(PDFName.of('ToUnicode'));
+      if (map instanceof PDFRawStream) {
+        let cmap = '';
+        try { cmap = new TextDecoder('latin1').decode(decodePDFRawStream(map).decode()); } catch { /* unreadable: keep the usual meaning */ }
+        for (const code of [3, 32]) { const t = cmapText(cmap, code); if (t !== undefined && t.trim()) this.notBlank.add(code); }
       }
     } else {
       this.bytesPerCode = 1;
@@ -443,6 +470,7 @@ export class PageContent {
               element: index, bytes: bytes.slice(k, k + n), rect: applyToRect(local, toUser), displacement: tx,
               origin: applyToPoint(0, gs.rise, toUser), size: fs * Math.hypot(toUser[2], toUser[3]), upright,
               fontResource: gs.fontName, color: gs.fill, invisible: gs.renderMode === 3 || gs.renderMode === 7,
+              ...(n === 2 && (code === 3 || code === 32) && metrics.notBlank.has(code) ? { blank: false } : {}),
             });
             tm = concat([1, 0, 0, 1, tx, 0], tm);
             k += n;

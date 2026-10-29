@@ -32,6 +32,31 @@ enum OCR {
         }
     }
 
+    /// The text in one small area of a page (a line whose font doesn't say what its letters are), read from its
+    /// rendering at about 40 pixels per line.
+    static func text(of page: PDFPage, in rect: CGRect) -> String? {
+        let area = rect.insetBy(dx: -2, dy: -rect.height * 0.2)
+        let scale = min(12, max(3, 48 / max(rect.height, 1)))
+        let w = Int(area.width * scale), h = Int(area.height * scale)
+        guard w > 4, h > 4, w * h < 40_000_000,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.setFillColor(.white)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: -area.minX, y: -area.minY)
+        page.draw(with: .mediaBox, to: ctx)
+        guard let image = ctx.makeImage() else { return nil }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.automaticallyDetectsLanguage = true
+        guard (try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])) != nil else { return nil }
+        let parts = (request.results ?? []).sorted { $0.boundingBox.minX < $1.boundingBox.minX }.compactMap { $0.topCandidates(1).first?.string }
+        let s = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return s.isEmpty ? nil : s
+    }
+
     /// Draws `lines` as invisible text, stretched to cover each recognised box, so it can be searched and selected.
     static func drawInvisibleText(_ lines: [Line], in ctx: CGContext) {
         ctx.setTextDrawingMode(.invisible)
@@ -62,6 +87,8 @@ extension EditorModel {
         guard !targets.isEmpty else {
             return Panels.alert("Nothing to recognize", "All selected pages already contain text.")
         }
+        // Rotated scans are made upright first, so recognised lines (and later edits) run the way the page is read.
+        for i in targets { if let page = copy.page(at: i), page.rotation % 360 != 0 { copy.replacePage(at: i, with: PageCompositor.upright(page)) } }
         run("Recognizing text…") { progress in
             var results: [(Int, [OCR.Line])] = []
             for (n, i) in targets.enumerated() {

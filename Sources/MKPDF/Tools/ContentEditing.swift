@@ -15,6 +15,20 @@ struct TextBlock {
     var alignment: NSTextAlignment
     /// Recognised (OCR) text over a scan or drawing: the visible letters are pixels, not text.
     var scanned = false
+    /// The table cell holding the block (between the vertical lines on either side), when it's in one.
+    var cell: CGRect? = nil
+
+    /// The width edited text wraps at: the paragraph's width, or for one line in a table cell, the room left in the
+    /// cell (so longer text wraps inside it instead of running across the next column). Nil: no wrapping.
+    var wrapWidth: CGFloat? {
+        if isMultiline { return rect.width + 2 }
+        guard let cell else { return nil }
+        switch alignment {
+        case .right: return rect.maxX - cell.minX - 3
+        case .center: return cell.width - 4
+        default: return cell.maxX - rect.minX - 3
+        }
+    }
 
     var firstBaseline: CGFloat { baselines.first ?? rect.maxY }
     var isMultiline: Bool { lineRects.count > 1 }
@@ -27,47 +41,39 @@ enum ContentEditor {
         guard let ref = page.pageRef else { return [] }
         let content = PageContent(page: ref)
         let baseFonts = Dictionary(content.shows.map { ($0.fontResource, $0.baseFont) }, uniquingKeysWith: { a, _ in a })
-        let glyphs = content.glyphs.filter { $0.upright && $0.rect.width > 0.05 && $0.size > 0.5 }
+        // Text drawn twice on top of itself (a fake bold) is one line of text; editing removes both copies.
+        let glyphs = content.glyphsWithoutOverprint.filter { $0.upright && $0.rect.width > 0.05 && $0.size > 0.5 }
 
         // A table's vertical lines separate cells: text never joins across one.
         let walls = content.rules.filter { $0.height > $0.width * 3 && $0.height > 4 }
+        let floors = content.rules.filter { $0.width > $0.height * 3 && $0.width > 4 }
         func walled(_ a: Glyph, _ b: Glyph) -> Bool {
             let x0 = min(a.rect.maxX, b.rect.minX) - 0.5, x1 = max(a.rect.maxX, b.rect.minX) + 0.5, y = (a.rect.midY + b.rect.midY) / 2
             return walls.contains { $0.midX > x0 && $0.midX < x1 && $0.minY <= y && $0.maxY >= y }
         }
-        // Glyphs → lines: same baseline, moving right, no column-sized gap.
+        // Glyphs → lines: same baseline, split at column-sized gaps and table rules. Lines are found by position, not
+        // drawing order, so text placed glyph by glyph in any order (right-to-left scripts, tables drawn by column)
+        // still forms whole lines.
         var lines: [[Glyph]] = []
-        for g in glyphs {
-            if let prev = lines.last?.last,
-               abs(g.origin.y - prev.origin.y) < max(1, prev.size * 0.25),
-               g.rect.minX >= prev.rect.minX - 0.5,
-               g.rect.minX - prev.rect.maxX < max(prev.size, g.size) * 1.1, !walled(prev, g) {
-                lines[lines.count - 1].append(g)
-            } else {
-                lines.append([g])
+        var band: [Glyph] = []
+        func endBand() {
+            var line: [Glyph] = []
+            for g in band.sorted(by: { $0.rect.minX < $1.rect.minX }) {
+                if let prev = line.last, g.rect.minX - prev.rect.maxX >= max(prev.size, g.size) * 1.1 || walled(prev, g) { lines.append(line); line = [] }
+                line.append(g)
             }
+            if !line.isEmpty { lines.append(line) }
+            band = []
         }
-        // Join fragments drawn separately but sitting on one line.
-        var merged = true
-        while merged {
-            merged = false
-            outer: for i in lines.indices {
-                for j in lines.indices where i != j {
-                    guard let a = lines[i].last, let b = lines[j].first else { continue }
-                    if abs(a.origin.y - b.origin.y) < max(1, a.size * 0.25), b.rect.minX >= a.rect.maxX - 1,
-                       b.rect.minX - a.rect.maxX < max(a.size, b.size) * 1.1, !walled(a, b) {
-                        lines[i] += lines[j]
-                        lines.remove(at: j)
-                        merged = true
-                        break outer
-                    }
-                }
-            }
+        for g in glyphs.sorted(by: { $0.origin.y > $1.origin.y }) {
+            if let first = band.first, abs(g.origin.y - first.origin.y) >= max(1, first.size * 0.25) { endBand() }
+            band.append(g)
         }
+        endBand()
 
         struct Line { var rect: CGRect; var baseline: CGFloat; var size: CGFloat; var font: String; var resource: String; var color: CGColor?; var invisible: Bool; var glyphs: [Glyph] }
         let lineInfo: [Line] = lines.compactMap { gs in
-            let visible = gs.filter { $0.bytes != Data([32]) && $0.bytes != Data([0, 3]) && $0.bytes != Data([0, 32]) }
+            let visible = gs.filter { !content.isBlank($0) }
             guard !visible.isEmpty else { return nil }
             let rect = visible.reduce(CGRect.null) { $0.union($1.rect) }
             let sizes = visible.map(\.size).sorted()
@@ -77,41 +83,63 @@ enum ContentEditor {
         }
         func decoded(_ line: Line) -> String? { content.string(of: line.glyphs) }
 
-        // Lines → paragraphs: evenly spaced, similar size, aligned.
+        // Lines → paragraphs: each line joins the paragraph directly above it when evenly spaced, similar in size and
+        // aligned (so columns side by side stay separate paragraphs).
         var groups: [[Line]] = []
+        var open: [Int] = []
         for line in lineInfo {
-            if let block = groups.last, let last = block.last {
+            var best: (index: Int, pitch: CGFloat)?
+            for gi in open {
+                let block = groups[gi], last = block[block.count - 1]
                 let pitch = last.baseline - line.baseline
                 let sameSize = abs(line.size - last.size) < max(line.size, last.size) * (line.invisible ? 0.3 : 0.15)
                 let spacingOK = pitch > line.size * 0.8 && pitch < line.size * 1.9
                 let steady = block.count < 2 || abs(pitch - (block[block.count - 2].baseline - last.baseline)) < line.size * 0.3
                 let aligned = abs(line.rect.minX - block[block.count > 1 ? 1 : 0].rect.minX) < line.size * (block.count == 1 ? 3 : 1.2)
                     || abs(line.rect.midX - last.rect.midX) < line.size
-                if sameSize && spacingOK && steady && aligned {
-                    groups[groups.count - 1].append(line)
-                    continue
-                }
+                let overlaps = line.rect.minX < last.rect.maxX && line.rect.maxX > last.rect.minX
+                    && !floors.contains { $0.midY < last.rect.minY + 0.5 && $0.midY > line.rect.maxY - 0.5 && $0.minX < line.rect.maxX && $0.maxX > line.rect.minX }
+                if sameSize && spacingOK && steady && aligned && overlaps && pitch < (best?.pitch ?? .infinity) { best = (gi, pitch) }
             }
-            groups.append([line])
+            if let best { groups[best.index].append(line) } else { groups.append([line]); open.append(groups.count - 1) }
+            // Paragraphs whose last line is far above can't continue.
+            open.removeAll { gi in groups[gi][groups[gi].count - 1].baseline - line.baseline > line.size * 2.5 }
+            if best == nil, !open.contains(groups.count - 1) { open.append(groups.count - 1) }
         }
 
-        return groups.compactMap { group -> TextBlock? in
-            var texts: [String] = []
+        let found = groups.compactMap { group -> TextBlock? in
+            var texts: [(text: String, width: CGFloat)] = []
             var attributes: [NSAttributedString.Key: Any] = [:]
             for line in group {
                 let own = decoded(line)
-                if let own { texts.append(own) }
+                if let own { texts.append((own, line.rect.width)) }
                 if own != nil && (!attributes.isEmpty || group[0].color != nil) { continue }
                 let probe = line.rect.insetBy(dx: -0.5, dy: line.rect.height * 0.25)
                 guard let sel = page.selection(for: probe) else { continue }
                 let s = (sel.string ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                if own == nil, !s.isEmpty { texts.append(s) }
+                if own == nil {
+                    // PDFKit's text is only believable when it has about as many letters as the line has glyphs;
+                    // otherwise (fonts whose letters have no character codes) the line is read from its rendering.
+                    let shown = PageContent.withoutOverprint(line.glyphs.sorted { $0.rect.minX < $1.rect.minX })
+                        .filter { !content.isBlank($0) }.count
+                    let letters = s.filter { !$0.isWhitespace }.count
+                    if !s.isEmpty, abs(letters - shown) <= max(2, shown / 4) { texts.append((s, line.rect.width)) }
+                    else if let read = OCR.text(of: page, in: line.rect) { texts.append((read, line.rect.width)) }
+                    else if !s.isEmpty { texts.append((s, line.rect.width)) }
+                }
                 if attributes.isEmpty, let attr = sel.attributedString, attr.length > 0 {
                     let i = (attr.string.firstIndex { !$0.isWhitespace }).map { attr.string.distance(from: attr.string.startIndex, to: $0) } ?? 0
                     attributes = attr.attributes(at: min(i, attr.length - 1), effectiveRange: nil)
                 }
             }
-            let text = texts.joined(separator: " ")
+            // A line that ends well short of the paragraph's width ended there on purpose (a list, an address, labels):
+            // that break is kept, so editing reflows only lines that were wrapped.
+            let full = texts.map(\.width).max() ?? 0
+            var text = ""
+            for (k, t) in texts.enumerated() {
+                if k > 0 { text += texts[k - 1].width < full * 0.75 ? "\n" : " " }
+                text += t.text
+            }
             guard !text.isEmpty else { return nil }
             let size = group[0].size
             let font = FontResolver.font(baseFont: group[0].font, embedded: { content.fontProgram(for: group[0].resource) },
@@ -121,9 +149,48 @@ enum ContentEditor {
             let rect = group.reduce(CGRect.null) { $0.union($1.rect) }
             let centered = group.count > 1 && group.allSatisfy { abs($0.rect.midX - rect.midX) < size } && !group.allSatisfy { abs($0.rect.minX - rect.minX) < 1 }
             let scanned = group.allSatisfy(\.invisible)
+            // The table cell around the block, from the nearest vertical lines on each side.
+            var cell: CGRect?
+            let sides = walls.filter { $0.minY <= rect.midY && $0.maxY >= rect.midY }
+            if let l = sides.filter({ $0.midX <= rect.minX + 1 }).max(by: { $0.midX < $1.midX }),
+               let r = sides.filter({ $0.midX >= rect.maxX - 1 }).min(by: { $0.midX < $1.midX }) {
+                cell = CGRect(x: l.maxX, y: max(l.minY, r.minY), width: r.minX - l.maxX, height: min(l.maxY, r.maxY) - max(l.minY, r.minY))
+            }
+            var alignment: NSTextAlignment = centered ? .center : (text.isRightToLeft ? .right : .left)
+            if let cell, group.count == 1 {
+                // A single line set against the cell's right side (amounts) or in its middle keeps that alignment.
+                let left = rect.minX - cell.minX, right = cell.maxX - rect.maxX
+                if right < 6 && left > right * 3 { alignment = .right } else if abs(left - right) < 2.5 && left > 6 { alignment = .center }
+            }
             return TextBlock(rect: rect, lineRects: group.map(\.rect), baselines: group.map(\.baseline), text: text,
                              font: font, color: scanned ? .black : color, pitch: pitch,
-                             alignment: centered ? .center : (text.isRightToLeft ? .right : .left), scanned: scanned)
+                             alignment: alignment, scanned: scanned, cell: cell)
+        }
+        // A single line with other text beside it on the same line (a table without vertical lines): the gap up to
+        // that text is its cell, so longer text wraps there instead of running into the next column.
+        let crop = page.bounds(for: .cropBox)
+        return found.map { block -> TextBlock in
+            guard !block.isMultiline else { return block }
+            var block = block
+            // Column alignment: single lines above and below sharing this one's right edge (but not its left edge)
+            // make a right-aligned column, like amounts in a table; sharing its centre, a centred one.
+            if block.alignment == .left && !block.text.isRightToLeft {
+                let column = found.filter { o in !o.isMultiline && o.rect.minY != block.rect.minY && abs(o.rect.midY - block.rect.midY) < 200
+                    && o.rect.minX < block.rect.maxX && o.rect.maxX > block.rect.minX }
+                let rights = column.filter { abs($0.rect.maxX - block.rect.maxX) < 1.5 && abs($0.rect.minX - block.rect.minX) > 2 }.count
+                let centres = column.filter { abs($0.rect.midX - block.rect.midX) < 1.5 && abs($0.rect.minX - block.rect.minX) > 2 }.count
+                let lefts = column.filter { abs($0.rect.minX - block.rect.minX) < 1.5 }.count
+                if rights >= 2 && rights > lefts { block.alignment = .right } else if centres >= 2 && centres > lefts { block.alignment = .center }
+            }
+            guard block.cell == nil else { return block }
+            let row = found.filter { $0.rect.minY < block.rect.midY && $0.rect.maxY > block.rect.midY }
+            let right = row.filter { $0.rect.minX >= block.rect.maxX - 0.5 }.map(\.rect.minX).min()
+            let left = row.filter { $0.rect.maxX <= block.rect.minX + 0.5 }.map(\.rect.maxX).max()
+            guard right != nil || left != nil else { return block }
+            var b = block
+            let x0 = (left ?? crop.minX) + 3, x1 = (right ?? crop.maxX) - 3
+            b.cell = CGRect(x: x0, y: block.rect.minY, width: max(block.rect.width, x1 - x0), height: block.rect.height)
+            return b
         }
     }
 
@@ -292,7 +359,12 @@ enum FontResolver {
         var traits: NSFontTraitMask = []
         if ["bold", "black", "heavy", "semibold", "demi"].contains(where: lower.contains) { traits.insert(.boldFontMask) }
         if lower.contains("italic") || lower.contains("oblique") { traits.insert(.italicFontMask) }
-        return NSFontManager.shared.font(withFamily: family, traits: traits, weight: 5, size: size) ?? .systemFont(ofSize: size)
+        let chosen = NSFontManager.shared.font(withFamily: family, traits: traits, weight: 5, size: size) ?? .systemFont(ofSize: size)
+        if covers(chosen, sample) { return chosen }
+        // Text in another script (Arabic, Hebrew, CJK…): the system's font for those letters, in the same weight.
+        let cascade = CTFontCreateForString(chosen as CTFont, sample as CFString, CFRange(location: 0, length: (sample as NSString).length)) as NSFont
+        return NSFontManager.shared.convert(cascade, toHaveTrait: traits)
+
     }
 
     static func covers(_ font: NSFont, _ text: String) -> Bool {
@@ -370,8 +442,10 @@ extension EditorModel {
         }
         guard let newPage = ContentEditor.rewrite(page, edit: { content in
             guard !rects.isEmpty else { return }
+            // The line's glyphs, and the blank spaces just before or after it (otherwise they'd sit among the new letters).
             content.removeGlyphs { g in
-                g.upright && rects.contains { $0.contains(CGPoint(x: g.rect.midX, y: g.rect.midY)) }
+                let c = CGPoint(x: g.rect.midX, y: g.rect.midY)
+                return g.upright && rects.contains { $0.contains(c) || (content.isBlank(g) && $0.insetBy(dx: -CGFloat(g.size) * 1.5, dy: 0).contains(c)) }
             }
         }, overlay: trimmed.isEmpty && patches.isEmpty ? nil : { ctx in
             if !patches.isEmpty {

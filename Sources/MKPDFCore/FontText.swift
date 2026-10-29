@@ -185,31 +185,106 @@ final class FontText {
 
 extension PageContent {
     /// One line's text read from its glyphs' fonts, with spaces where the font draws one or the gap is a word gap.
-    /// Nil when a font doesn't say what its codes mean, or for right-to-left text (PDFKit orders that).
+    /// Right-to-left text (Arabic, Hebrew) is put in reading order, keeping numbers and Latin words inside it left to
+    /// right, and Arabic's positional letter shapes become ordinary letters. Nil when a font doesn't say what its codes
+    /// mean.
     public func string(of line: [Glyph]) -> String? {
-        var out = ""
+        var tokens: [String] = []
         var lastEnd: CGFloat?
-        for g in line.sorted(by: { $0.rect.minX < $1.rect.minX }) {
+        func space() { if let last = tokens.last, last != " " { tokens.append(" ") } }
+        for g in Self.withoutOverprint(line.sorted(by: { $0.rect.minX < $1.rect.minX })) {
             guard knowsText(of: g), var t = text(of: g) else {
-                if g.bytes == Data([32]) || g.bytes == Data([0, 3]) || g.bytes == Data([0, 32]) { if !out.hasSuffix(" ") { out += " " }; continue }
+                if isBlank(g) { space(); continue }
                 return nil
             }
-            if t.unicodeScalars.contains(where: { (0xE000...0xF8FF).contains($0.value) || $0.value == 0xFFFD || $0.value < 32 || (0x0590...0x08FF).contains($0.value) || (0xFB1D...0xFEFF).contains($0.value) }) { return nil }
-            // Ligature characters (ﬁ, ﬂ) become their letters, so retyped text uses ordinary characters.
-            if t.unicodeScalars.contains(where: { (0xFB00...0xFB06).contains($0.value) }) { t = t.decomposedStringWithCompatibilityMapping }
-            if t.allSatisfy(\.isWhitespace) { if !out.hasSuffix(" ") && !out.isEmpty { out += " " }; continue }
-            if let e = lastEnd, g.rect.minX - e > CGFloat(g.size) * 0.18, !out.hasSuffix(" ") { out += " " }
-            out += t
+            if t.unicodeScalars.contains(where: { (0xE000...0xF8FF).contains($0.value) || $0.value == 0xFFFD || $0.value < 32 }) { return nil }
+            // Ligatures (ﬁ, ﬂ) and Arabic presentation forms become ordinary letters, so retyped text uses them.
+            if t.unicodeScalars.contains(where: { (0xFB00...0xFB06).contains($0.value) || (0xFB50...0xFDFF).contains($0.value) || (0xFE70...0xFEFF).contains($0.value) }) {
+                t = t.precomposedStringWithCompatibilityMapping
+            }
+            if t.allSatisfy(\.isWhitespace) { space(); continue }
+            if let e = lastEnd, g.rect.minX - e > CGFloat(g.size) * 0.18 { space() }
+            tokens.append(t)
             lastEnd = max(lastEnd ?? -.infinity, g.rect.maxX)
         }
-        let s = out.trimmingCharacters(in: .whitespaces)
-        return s.isEmpty ? nil : s
+        while tokens.last == " " { tokens.removeLast() }
+        while tokens.first == " " { tokens.removeFirst() }
+        guard !tokens.isEmpty else { return nil }
+        guard tokens.contains(where: Self.isRightToLeft) else { return tokens.joined() }
+        // Glyphs are in visual order (left to right). Read right to left; a run of left-to-right text (numbers, Latin
+        // words and the spaces or punctuation between them) is kept in its own order.
+        func ltr(_ t: String) -> Bool { t.unicodeScalars.first(where: { $0.properties.isAlphabetic || $0.properties.numericType != nil }).map { !Self.rtlScalar($0) } ?? false }
+        func neutral(_ t: String) -> Bool { !ltr(t) && !Self.isRightToLeft(t) }
+        var out = ""
+        var i = tokens.count - 1
+        while i >= 0 {
+            // A bracket drawn at the start of right-to-left text faces the other way: the glyph ")" is an opening "(".
+            guard ltr(tokens[i]) else { out += Self.isRightToLeft(tokens[i]) ? tokens[i] : Self.mirrored(tokens[i]); i -= 1; continue }
+            var j = i
+            while j > 0 {
+                if ltr(tokens[j - 1]) { j -= 1; continue }
+                // Neutrals join the run only when more left-to-right text follows on their left.
+                var k = j - 1
+                while k >= 0 && neutral(tokens[k]) { k -= 1 }
+                if k >= 0 && ltr(tokens[k]) { j = k } else { break }
+            }
+            out += tokens[j...i].joined()
+            i = j - 1
+        }
+        return out.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A space: code 32, or a composite font's code 3 or 32 unless its ToUnicode map says that code is a letter
+    /// (some Arabic fonts put a letter there).
+    public func isBlank(_ g: Glyph) -> Bool {
+        if g.bytes == Data([32]) { return true }
+        guard g.bytes == Data([0, 3]) || g.bytes == Data([0, 32]) else { return false }
+        return text(of: g).map { $0.allSatisfy(\.isWhitespace) } ?? true
+    }
+
+    /// The page's glyphs without those drawn again on top of themselves (a fake bold), in drawing order.
+    public var glyphsWithoutOverprint: [Glyph] {
+        var seen: [String: [Glyph]] = [:]
+        var out: [Glyph] = []
+        for g in glyphs {
+            let key = "\(g.fontResource)|\(g.bytes.base64EncodedString())|\(Int((g.origin.y * 2).rounded()))"
+            if seen[key]?.contains(where: { abs($0.rect.minX - g.rect.minX) < max(0.6, g.rect.width * 0.3) && abs($0.origin.y - g.origin.y) < 0.5 }) == true { continue }
+            seen[key, default: []].append(g)
+            out.append(g)
+        }
+        return out
+    }
+
+    /// Drops glyphs drawn again on top of themselves, a little offset (a fake bold): same code, same font, same place.
+    public static func withoutOverprint(_ sorted: [Glyph]) -> [Glyph] {
+        var kept: [Glyph] = []
+        for g in sorted {
+            let twin = kept.suffix(4).contains { k in
+                k.bytes == g.bytes && k.fontResource == g.fontResource && abs(k.origin.y - g.origin.y) < 0.5
+                    && abs(k.rect.minX - g.rect.minX) < max(0.6, g.rect.width * 0.3)
+            }
+            if !twin { kept.append(g) }
+        }
+        return kept
+    }
+
+    static func rtlScalar(_ u: Unicode.Scalar) -> Bool {
+        let v = u.value
+        if (0x0660...0x0669).contains(v) || (0x06F0...0x06F9).contains(v) { return false } // Arabic-Indic digits read left to right
+        return (0x0590...0x08FF).contains(v) || (0xFB1D...0xFDFF).contains(v) || (0xFE70...0xFEFF).contains(v)
+    }
+
+    static func isRightToLeft(_ t: String) -> Bool { t.unicodeScalars.contains(where: rtlScalar) }
+
+    static func mirrored(_ t: String) -> String {
+        let pairs: [Character: Character] = ["(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<", "«": "»", "»": "«"]
+        return String(t.map { pairs[$0] ?? $0 })
     }
 
     /// The text of the glyphs whose centres lie in `rect`, line by line (top to bottom); nil when any of it can't be
     /// read from the fonts.
     public func string(in rect: CGRect) -> String? {
-        let inside = glyphs.filter { $0.upright && !$0.invisible && rect.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) }
+        let inside = glyphsWithoutOverprint.filter { $0.upright && !$0.invisible && rect.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) }
         guard !inside.isEmpty else { return nil }
         var lines: [[Glyph]] = []
         for g in inside.sorted(by: { $0.origin.y > $1.origin.y }) {

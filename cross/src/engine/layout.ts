@@ -142,9 +142,13 @@ export function textIn(source: TextItem[] | TextIndex, r: Rect): string {
     if (it.y >= r.y - it.h * 0.35 && it.x < maxX(r) && it.x + it.w > r.x && it.str.length) hits.push(it);
   }
   hits.sort((a, b) => a.x - b.x);
+  // Right-to-left text placed letter by letter comes as one-letter items in drawing order; its space items are
+  // unreliable (drawn far from where they read), so word gaps come from the letters' positions instead.
+  const solid = hits.filter((h) => h.str.trim());
+  const visual = solid.length > 1 && solid.some((h) => RTL.test(h.str)) && solid.every((h) => !h.rtl || Array.from(h.str.trim()).length <= 2);
   let out = '';
   let lastEnd: number | null = null;
-  for (const it of hits) {
+  for (const it of visual ? solid : hits) {
     const cw = it.w / it.str.length || 1;
     const from = Math.max(0, Math.round((r.x - it.x) / cw));
     const to = Math.min(it.str.length, Math.round((maxX(r) - it.x) / cw));
@@ -153,11 +157,45 @@ export function textIn(source: TextItem[] | TextIndex, r: Rect): string {
       const n = it.str.length;
       s = it.str.slice(n - to, n - from);
     }
-    if (lastEnd !== null && it.x - lastEnd > it.h * 0.2 && !out.endsWith(' ') && !s.startsWith(' ')) out += ' ';
+    // (Joined letters touch, so in letter-by-letter text a smaller gap already separates words.)
+    if (lastEnd !== null && it.x - lastEnd > it.h * (visual ? 0.12 : 0.2) && !out.endsWith(' ') && !s.startsWith(' ')) out += ' ';
     out += s;
     lastEnd = it.x + it.w;
   }
-  return out.replace(/\s+/g, ' ').trim();
+  const text = out.replace(/\s+/g, ' ').trim();
+  // Right-to-left text that pdf.js left in drawing (visual) order is read right to left.
+  const ordered = visual || (!hits.some((h) => h.rtl) && RTL.test(text)) ? visualToLogical(text) : text;
+  // Arabic positional letter shapes (after ordering, so a lam-alef ligature stays in order) become ordinary letters.
+  return /[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(ordered) ? ordered.normalize('NFKC') : ordered;
+}
+
+const RTL = /[\u0590-\u065F\u066A-\u06EF\u06FA-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const MIRROR: Record<string, string> = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<', '«': '»', '»': '«' };
+
+/** Visual (left-to-right drawing order) right-to-left text → reading order; numbers and Latin words keep their order. */
+export function visualToLogical(s: string): string {
+  // Units: a letter with the marks after it.
+  const units: string[] = [];
+  for (const ch of Array.from(s)) {
+    if (/\p{M}/u.test(ch) && units.length) units[units.length - 1] += ch;
+    else units.push(ch);
+  }
+  const ltr = (u: string) => /[\p{L}\p{N}]/u.test(u) && !RTL.test(u);
+  const neutral = (u: string) => !ltr(u) && !RTL.test(u);
+  let out = '';
+  for (let i = units.length - 1; i >= 0;) {
+    if (!ltr(units[i])) { out += RTL.test(units[i]) ? units[i] : (MIRROR[units[i]] ?? units[i]); i--; continue; }
+    let j = i;
+    while (j > 0) {
+      if (ltr(units[j - 1])) { j--; continue; }
+      let k = j - 1;
+      while (k >= 0 && neutral(units[k])) k--;
+      if (k >= 0 && ltr(units[k])) j = k; else break;
+    }
+    out += units.slice(j, i + 1).join('');
+    i = j - 1;
+  }
+  return out;
 }
 
 /**
@@ -166,7 +204,13 @@ export function textIn(source: TextItem[] | TextIndex, r: Rect): string {
  * the glyphs it covers (per baseline and per segment, since every column starts at its own position). It also
  * drops the space between items in different fonts ("this" + bold "Agreement"); the page's space glyph puts it back.
  */
-function alignItems(items: TextItem[], glyphs: Glyph[]): TextItem[] {
+function alignItems(raw: TextItem[], glyphs: Glyph[]): TextItem[] {
+  // Text drawn twice on top of itself (a fake bold) comes back twice.
+  const items: TextItem[] = [];
+  for (const it of raw) {
+    if (items.some((k) => k.str === it.str && Math.abs(k.y - it.y) < 0.5 && Math.abs(k.x - it.x) < Math.max(0.8, it.w * 0.1))) continue;
+    items.push(it);
+  }
   const runs: { y: number; x0: number; x1: number }[] = [];
   const all = glyphs.slice().sort((a, b) => a.rect.x - b.rect.x);
   const sorted = glyphs.filter((g) => !isSpace(g)).sort((a, b) => b.origin.y - a.origin.y || a.rect.x - b.rect.x);

@@ -44,6 +44,35 @@ enum PageFactory {
 }
 
 enum PageCompositor {
+    /// A rotated page (/Rotate 90, 180 or 270) redrawn upright: the rotation goes into the content, so the page looks
+    /// the same but its text runs left to right in page space and can be recognised and edited. Unrotated pages are
+    /// returned as they are.
+    static func upright(_ page: PDFPage) -> PDFPage {
+        let r = ((page.rotation % 360) + 360) % 360
+        guard r != 0, let ref = page.pageRef else { return page }
+        let c = page.bounds(for: .cropBox)
+        let t: CGAffineTransform
+        switch r {
+        case 90: t = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: -c.minY, ty: c.maxX)
+        case 180: t = CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: c.maxX, ty: c.maxY)
+        default: t = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: c.maxY, ty: -c.minX)
+        }
+        var content = Data(String(format: "q %.6f %.6f %.6f %.6f %.4f %.4f cm\n", t.a, t.b, t.c, t.d, t.tx, t.ty).utf8)
+        content += PDFWriter.contentData(of: ref)
+        content += Data("\nQ\n".utf8)
+        guard let data = PDFWriter.page(from: ref, content: content), let result = PDFDocument(data: data)?.page(at: 0) else { return page }
+        let box = c.applying(t).standardized
+        result.setBounds(box, for: .mediaBox)
+        result.setBounds(box, for: .cropBox)
+        result.rotation = 0
+        for a in page.annotations {
+            guard let copy = a.copy() as? PDFAnnotation else { continue }
+            copy.bounds = a.bounds.applying(t).standardized
+            result.addAnnotation(copy)
+        }
+        return result
+    }
+
     /// Rebuilds `page` with its original vector content, then `overlay` drawn on top (page space).
     /// Annotations are carried over unless listed in `burn`, in which case they're drawn into the page.
     static func compose(_ page: PDFPage, burn: [PDFAnnotation] = [], overlay: (CGContext) -> Void) -> PDFPage? {

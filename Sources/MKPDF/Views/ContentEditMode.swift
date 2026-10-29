@@ -131,7 +131,7 @@ extension MKPDFView {
             } else {
                 editor.commitTextEdit(page: page, original: block, text: block.text, font: block.font, color: block.color,
                                       alignment: block.alignment, at: CGPoint(x: block.rect.minX + dx, y: block.firstBaseline + dy),
-                                      width: block.isMultiline ? block.rect.width + 2 : nil, box: block.rect.width)
+                                      width: block.wrapWidth, box: block.rect.width)
             }
         case .object(let page, let obj, _, _, _):
             contentEdit.hovered = nil
@@ -255,10 +255,9 @@ extension MKPDFView {
         endSession()
         let changed = s.block.map { b in text != b.text || style.font != b.font || style.color != b.color || style.alignment != b.alignment } ?? true
         guard changed, !(s.block == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else { return }
-        let multiline = s.block?.isMultiline ?? false
         editor.commitTextEdit(page: s.page, original: s.block, text: text, font: style.font, color: style.color,
                               alignment: style.alignment, at: s.origin,
-                              width: multiline ? (s.block!.rect.width + 2) : nil, box: s.block?.rect.width)
+                              width: s.block?.wrapWidth, box: s.block?.rect.width)
     }
 
     func cancelSession() {

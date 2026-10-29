@@ -196,7 +196,7 @@ if let page = cgPage(quartzPDF()) {
     let content = PageContent(page: page)
     check(content.string(in: CGRect(x: 60, y: 695, width: 500, height: 12)) == "Quarterly report draft for review", "ToUnicode text of a Quartz PDF")
     check(content.string(in: CGRect(x: 60, y: 666, width: 500, height: 10)) == "Total amount due: 5,400 AED", "punctuation and digits")
-    check(content.string(in: CGRect(x: 60, y: 596, width: 500, height: 10)) == nil, "right-to-left text is left to PDFKit")
+    check(content.string(in: CGRect(x: 60, y: 596, width: 500, height: 10)) == "مرحبا بالعالم", "right-to-left text in reading order, as ordinary letters")
 }
 if let page = cgPage(handWrittenPDF()) {
     let content = PageContent(page: page)

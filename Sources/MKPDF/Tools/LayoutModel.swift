@@ -178,7 +178,7 @@ enum LayoutExtractor {
         let content = PageContent(page: ref)
         let baseFonts = Dictionary(content.shows.map { ($0.fontResource, $0.baseFont) }, uniquingKeysWith: { a, _ in a })
         let glyphs = content.glyphs.filter { $0.upright && $0.size > 0.5 && $0.rect.width > 0.01 }
-        func isSpace(_ g: Glyph) -> Bool { g.bytes == Data([32]) || g.bytes == Data([0, 3]) }
+        func isSpace(_ g: Glyph) -> Bool { content.isBlank(g) }
 
         // 1. Rows by baseline, split into segments at column-sized gaps or runs of 3+ spaces.
         let sorted = glyphs.sorted { abs($0.origin.y - $1.origin.y) > max(1, $0.size * 0.3) ? $0.origin.y > $1.origin.y : $0.rect.minX < $1.rect.minX }

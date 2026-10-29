@@ -14,9 +14,10 @@ extension ContentEditor {
     /// two or more spaces, so table columns come out as separate cells.
     static func rows(on page: PDFPage) -> [TextRow] {
         guard let ref = page.pageRef else { return [] }
-        let glyphs = PageContent(page: ref).glyphs.filter { $0.upright && $0.size > 0.5 }
+        let content = PageContent(page: ref)
+        let glyphs = content.glyphs.filter { $0.upright && $0.size > 0.5 }
             .sorted { abs($0.origin.y - $1.origin.y) > 1 ? $0.origin.y > $1.origin.y : $0.rect.minX < $1.rect.minX }
-        func isSpace(_ g: Glyph) -> Bool { g.bytes == Data([32]) || g.bytes == Data([0, 3]) }
+        func isSpace(_ g: Glyph) -> Bool { content.isBlank(g) }
 
         var rows: [TextRow] = []
         var current: [Glyph] = []
