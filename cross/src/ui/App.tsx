@@ -144,7 +144,12 @@ export function App() {
       )}
       <Dialogs />
       <Busy />
-      {toast.value && <div class="toast glass">{toast.value}</div>}
+      {toast.value && (
+        <div class="toast glass" role="status">
+          <span>{toast.value.message}</span>
+          {toast.value.action && <button class="glass-btn prominent" onClick={toast.value.action.run}>{toast.value.action.label}</button>}
+        </div>
+      )}
     </div>
   );
 }

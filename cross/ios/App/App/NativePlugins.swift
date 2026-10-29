@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import Capacitor
+import UniformTypeIdentifiers
 #if canImport(Translation)
 import Translation
 #endif
@@ -15,13 +16,58 @@ class MainViewController: CAPBridgeViewController {
 
 /// PDFs opened with MK PDF (from Files, Mail or a share sheet) are copied to a temporary folder and announced to
 /// the web app as "open" events, held until it listens, so a file that launched the app isn't lost.
+/// It also picks files with the system's document picker (the web view's file input often reports nothing the
+/// first time) and opens the app's folder in the Files app.
 @objc(OpenFilePlugin)
-public class OpenFilePlugin: CAPPlugin, CAPBridgedPlugin {
+public class OpenFilePlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     public let identifier = "OpenFilePlugin"
     public let jsName = "OpenFile"
-    public let pluginMethods: [CAPPluginMethod] = []
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "pick", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showFolder", returnType: CAPPluginReturnPromise),
+    ]
     private static var waiting: [[String: String]] = []
     private static weak var instance: OpenFilePlugin?
+    private var picking: CAPPluginCall?
+
+    /// `accept` is the web form: MIME types ("application/pdf", "image/*") and extensions (".pdf").
+    @objc func pick(_ call: CAPPluginCall) {
+        let accept = call.getString("accept") ?? ""
+        var types: [UTType] = accept.split(separator: ",").compactMap { token in
+            let t = token.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix(".") { return UTType(filenameExtension: String(t.dropFirst())) }
+            if t.hasSuffix("/*") { return t.hasPrefix("image") ? .image : t.hasPrefix("text") ? .text : .item }
+            return UTType(mimeType: t)
+        }
+        if types.isEmpty { types = [.item] }
+        DispatchQueue.main.async {
+            guard let parent = self.bridge?.viewController else { call.reject("Can't show the file picker."); return }
+            self.picking?.resolve(["files": []])
+            self.picking = call
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+            picker.allowsMultipleSelection = call.getBool("multiple") ?? false
+            picker.delegate = self
+            parent.present(picker, animated: true)
+        }
+    }
+
+    public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        // Copies (asCopy) live in the app's temporary folder; the web app reads and then deletes them.
+        picking?.resolve(["files": urls.map { ["name": $0.lastPathComponent, "path": $0.absoluteString] }])
+        picking = nil
+    }
+
+    public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        picking?.resolve(["files": []])
+        picking = nil
+    }
+
+    /// Opens the Files app where "On My iPhone › MK PDF" holds saved and exported files.
+    @objc func showFolder(_ call: CAPPluginCall) {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard let url = URL(string: "shareddocuments://" + documents.path) else { call.reject("No folder."); return }
+        DispatchQueue.main.async { UIApplication.shared.open(url) { ok in ok ? call.resolve() : call.reject("Files didn't open.") } }
+    }
 
     override public func load() {
         Self.instance = self
@@ -36,6 +82,8 @@ public class OpenFilePlugin: CAPPlugin, CAPBridgedPlugin {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let copy = dir.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000))-\(url.lastPathComponent)")
         guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return }
+        // Files sent from Mail and other apps arrive in Documents/Inbox, which Files would show beside saved files.
+        if url.deletingLastPathComponent().lastPathComponent == "Inbox" { try? FileManager.default.removeItem(at: url) }
         let file = ["name": url.lastPathComponent, "path": copy.absoluteString]
         DispatchQueue.main.async {
             if let instance { instance.notifyListeners("open", data: file, retainUntilConsumed: true) } else { waiting.append(file) }

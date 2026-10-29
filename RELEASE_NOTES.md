@@ -1,12 +1,12 @@
-## What's new in MK PDF 1.3.9
+## What's new in MK PDF 1.3.10
 
-**Scanned documents can be edited on the Mac**
-- Turning on Edit Text & Images on a scanned page recognises its text straight away. Before, the Mac app took the text macOS reads from a scan on screen for real text, so it skipped recognition and the page couldn't be edited.
-- Paragraphs can be clicked and edited right after Make This Page Editable or Repair PDF, without reopening the file.
-- Edited text on a scan matches the scan: the same size as the text around it, left-aligned paragraphs stay left-aligned, and lines break where they did on the page.
-- Export with text recognition and batch recognition now find scanned pages the same way.
+**iPhone and iPad**
+- Opening a PDF works the first time: documents are chosen with the system's document picker.
+- Saved and exported files are in the Files app under **On My iPhone › MK PDF** (the folder didn't appear before).
+- The message after saving or exporting sits above the home bar, wraps long file names, and has a **Show** button that opens the Files app.
+- PDFs sent to MK PDF from Mail and other apps no longer leave a copy in the MK PDF folder.
 
-**Windows, Android and iPhone**
-- Recognised text gets the size that matches the scan, so edits look the same size as the original.
+**Android and iPhone**
+- Choosing photos to add or convert no longer loses the selection.
 
-Includes everything in 1.3.8.
+Includes everything in 1.3.9.

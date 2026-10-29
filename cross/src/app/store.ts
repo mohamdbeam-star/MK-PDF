@@ -73,15 +73,21 @@ export const scale = signal(1);
 export const search = signal('');
 export const searchResults = signal<{ page: number; text: string; index: number }[]>([]);
 
-export const toast = signal<string | null>(null);
+export const toast = signal<{ message: string; action?: { label: string; run: () => void } } | null>(null);
 export const busy = signal<{ label: string; progress?: number } | null>(null);
 export const dialog = signal<{ kind: string; props?: Record<string, unknown> } | null>(null);
 
 let toastTimer = 0;
-export function showToast(message: string) {
-  toast.value = message;
+export function showToast(message: string, action?: { label: string; run: () => void }) {
+  toast.value = { message, action };
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toast.value = null), 3200);
+  toastTimer = window.setTimeout(() => (toast.value = null), action ? 6000 : 3200);
+}
+
+/** Reports a save or export, with a button to the folder where the platform can show it (iPhone: Files). */
+export function showSaved(message: string) {
+  const show = platform.showFolder;
+  showToast(message, show ? { label: 'Show', run: () => { toast.value = null; show(); } } : undefined);
 }
 
 /** Runs a long task with the progress overlay and reports failures. */
@@ -159,6 +165,6 @@ export async function saveActive(saveAs = false) {
     if (r.path) { d.path = r.path; d.name = r.path.split(/[\\/]/).pop() ?? d.name; }
     d.markSaved();
     docs.value = [...docs.value];
-    showToast(`Saved to ${r.label}`);
+    showSaved(`Saved to ${r.label}`);
   });
 }

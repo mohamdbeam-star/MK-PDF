@@ -65,7 +65,7 @@
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>MK PDF uses the camera to scan paper documents into PDFs.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

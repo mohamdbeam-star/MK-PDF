@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { active, dialog, placing, showToast, tool } from '../app/store';
+import { active, dialog, placing, showSaved, showToast, tool } from '../app/store';
 import * as actions from '../app/actions';
 import * as ops from '../pdf/ops';
 import { platform } from '../app/platform';
@@ -263,7 +263,7 @@ function TranslationDialog({ text, name }: { text: string; name: string }) {
       <textarea class="field translation" readOnly value={text} />
       <div class="buttons">
         <button class="glass-btn" onClick={() => { void navigator.clipboard?.writeText(text); showToast('Copied'); }}>Copy</button>
-        <button class="glass-btn" onClick={async () => { const r = await platform.saveFile(`${name} (translated).txt`, new TextEncoder().encode(text), 'text/plain'); if (r) showToast(`Saved to ${r.label}`); }}>Save as text</button>
+        <button class="glass-btn" onClick={async () => { const r = await platform.saveFile(`${name} (translated).txt`, new TextEncoder().encode(text), 'text/plain'); if (r) showSaved(`Saved to ${r.label}`); }}>Save as text</button>
         <button class="glass-btn prominent" onClick={close}>Done</button>
       </div>
     </Sheet>

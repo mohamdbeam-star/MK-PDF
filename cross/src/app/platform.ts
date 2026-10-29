@@ -25,6 +25,8 @@ export interface Platform {
   stopSpeaking(): void;
   /** On-device translation (iPhone, iOS 18 or later, with Apple's translator). */
   translate?(paragraphs: string[], target: string): Promise<string[]>;
+  /** Opens the folder files are saved to (iPhone: MK PDF in the Files app). */
+  showFolder?(): void;
 }
 
 /** The browser engine's speech (Windows' voices in Electron, iPhone's in WebKit). */
@@ -73,11 +75,16 @@ function pickFiles(accept: string, multiple: boolean, capture = false): Promise<
     input.accept = accept;
     input.multiple = multiple;
     if (capture) input.setAttribute('capture', 'environment');
+    // Kept in the page until the choice comes back: mobile web views can drop a detached input, and with it the
+    // files the user picked.
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    const done = (files: OpenedFile[]) => { input.remove(); resolve(files); };
     input.onchange = async () => {
       const files = [...(input.files ?? [])];
-      resolve(await Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
+      done(await Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
     };
-    input.oncancel = () => resolve([]);
+    input.oncancel = () => done([]);
     input.click();
   });
 }
@@ -124,7 +131,11 @@ async function capacitor(kind: 'android' | 'ios'): Promise<Platform> {
   const { Share } = await import('@capacitor/share');
   const { App } = await import('@capacitor/app');
   const { registerPlugin } = await import('@capacitor/core');
-  const OpenFile = registerPlugin<{ addListener(e: 'open', cb: (f: { name: string; path: string }) => void): Promise<unknown> }>('OpenFile');
+  const OpenFile = registerPlugin<{
+    addListener(e: 'open', cb: (f: { name: string; path: string }) => void): Promise<unknown>;
+    pick(o: { accept: string; multiple: boolean }): Promise<{ files: { name: string; path: string }[] }>;
+    showFolder(): Promise<void>;
+  }>('OpenFile');
   const Updater = registerPlugin<{ install(o: { url: string }): Promise<void>; notify(o: { title: string; body: string }): Promise<void> }>('Updater');
   const Translate = registerPlugin<{ available(): Promise<{ available: boolean }>; translate(o: { paragraphs: string[]; target: string }): Promise<{ paragraphs: string[] }> }>('Translate');
   const canTranslate = kind === 'ios' && (await Translate.available().catch(() => ({ available: false }))).available;
@@ -137,27 +148,37 @@ async function capacitor(kind: 'android' | 'ios'): Promise<Platform> {
     const r = await Filesystem.writeFile({ path, data: toB64(bytes), directory, recursive: true });
     return { uri: r.uri, path };
   };
+  /** Reads a file the native side copied into the app's temporary folder, then deletes the copy. */
+  const take = async (d: { name: string; path: string }): Promise<OpenedFile> => {
+    const r = await Filesystem.readFile({ path: d.path });
+    void Filesystem.deleteFile({ path: d.path }).catch(() => {});
+    return { name: d.name, bytes: fromB64(r.data as string) };
+  };
   const listeners: ((f: OpenedFile) => void)[] = [];
   const pending: OpenedFile[] = [];
   // The native activity copies files opened with "Open with MK PDF" into the cache and announces them
   // (held natively until this listener exists, so a file that launched the app isn't lost).
   void OpenFile.addListener('open', async (d) => {
     try {
-      const r = await Filesystem.readFile({ path: d.path });
-      const f = { name: d.name, bytes: fromB64(r.data as string) };
+      const f = await take(d);
       if (listeners.length) listeners.forEach((l) => l(f)); else pending.push(f);
-      void Filesystem.deleteFile({ path: d.path }).catch(() => {});
     } catch { /* unreadable */ }
   });
   // iPhone: the app's Documents folder is "On My iPhone › MK PDF" in the Files app.
-  const place = kind === 'ios' ? 'Files › On My iPhone › MK PDF' : 'Documents/MK PDF';
+  const place = kind === 'ios' ? 'On My iPhone › MK PDF (Files app)' : 'Documents/MK PDF';
   const folder = kind === 'ios' ? '' : 'MK PDF';
   return {
     kind, mobile: true, version: APP_VERSION,
-    openFiles: (accept, multiple, capture) => pickFiles(accept, multiple, capture),
+    async openFiles(accept, multiple, capture) {
+      // iPhone documents come from the system's document picker; photos and the camera keep the web view's
+      // own chooser, which offers the photo library.
+      if (kind !== 'ios' || capture || accept === 'image/*') return pickFiles(accept, multiple, capture);
+      const { files } = await OpenFile.pick({ accept, multiple });
+      return Promise.all(files.map(take));
+    },
     async saveFile(name, bytes) {
       await write(folder, name, bytes, Directory.Documents);
-      return { label: `${place}/${name}` };
+      return { label: kind === 'ios' ? `“${name}” in ${place}` : `${place}/${name}` };
     },
     async saveMany(files) {
       for (const f of files) await write(folder, f.name, f.bytes, Directory.Documents);
@@ -168,6 +189,7 @@ async function capacitor(kind: 'android' | 'ios'): Promise<Platform> {
       await Share.share({ title: name, url: uri, dialogTitle: `Share ${name}` });
     },
     onOpenFile(cb) { listeners.push(cb); pending.splice(0).forEach(cb); },
+    ...(kind === 'ios' ? { showFolder: () => { void OpenFile.showFolder().catch(() => {}); } } : {}),
     openExternal: (url) => { window.open(url, '_system'); },
     // Android: downloads the APK and opens the system installer, which updates this app in place. iPhone apps
     // can't install themselves; the release page has the new build to sign and install.

@@ -2,7 +2,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { platform } from './platform';
 import {
-  active, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showToast, task,
+  active, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showSaved, showToast, task,
 } from './store';
 import * as ops from '../pdf/ops';
 import * as annots from '../pdf/annots';
@@ -87,7 +87,7 @@ export async function exportAs(format: DocFormat, ocr: boolean) {
   });
   if (!result) return;
   const saved = await platform.saveFile(`${base(d.name)}.${format}`, result, MIME[format]);
-  if (saved) { showToast(`Exported to ${saved.label}`); platform.notify('Export finished', saved.label); }
+  if (saved) { showSaved(`Exported to ${saved.label}`); platform.notify('Export finished', saved.label); }
 }
 
 export async function exportPageImages(type: 'png' | 'jpeg' | 'webp', dpi: number, quality: number) {
@@ -97,7 +97,7 @@ export async function exportPageImages(type: 'png' | 'jpeg' | 'webp', dpi: numbe
   if (!images) return;
   const ext = type === 'jpeg' ? 'jpg' : type;
   const where = await platform.saveMany(images.map((b, i) => ({ name: `${base(d.name)}-${i + 1}.${ext}`, bytes: b })), `image/${type}`);
-  if (where) showToast(`Saved ${images.length} images to ${where}`);
+  if (where) showSaved(`Saved ${images.length} images to ${where}`);
 }
 
 export async function extractImages() {
@@ -128,7 +128,7 @@ export async function extractImages() {
   if (!files) return;
   if (!files.length) return showToast('No images in this document.');
   const where = await platform.saveMany(files, 'image/*');
-  if (where) showToast(`Saved ${files.length} images to ${where}`);
+  if (where) showSaved(`Saved ${files.length} images to ${where}`);
 }
 
 export async function runOcr(pages: number[] | null, languages: string, skipText: boolean) {
@@ -229,7 +229,7 @@ export async function splitActive(mode: 'every' | 'ranges' | 'parts' | 'size', v
     const files = [];
     for (const [i, g] of groups.entries()) files.push({ name: `${base(d.name)} part ${i + 1}.pdf`, bytes: await ops.extract(doc, g) });
     const where = await platform.saveMany(files, 'application/pdf');
-    if (where) showToast(`Saved ${files.length} files to ${where}`);
+    if (where) showSaved(`Saved ${files.length} files to ${where}`);
   });
 }
 
@@ -265,7 +265,7 @@ export { docs };
 
 const savePdf = async (name: string, bytes: Uint8Array) => {
   const r = await platform.saveFile(name, bytes, 'application/pdf');
-  if (r) showToast(`Saved to ${r.label}`);
+  if (r) showSaved(`Saved to ${r.label}`);
 };
 
 /** A copy of the document as flattened (print-ready), grayscale or PDF/X-3 output. */
@@ -288,7 +288,7 @@ export async function exportCommentSummary() {
   if (!d) return;
   const html = extras.commentSummary(await d.library(), d.name);
   const r = await platform.saveFile(`${base(d.name)} comments.html`, new TextEncoder().encode(html), 'text/html');
-  if (r) showToast(`Saved to ${r.label}`);
+  if (r) showSaved(`Saved to ${r.label}`);
 }
 
 export const flattenComments = () => edit('Flatten Comments', (doc) => extras.flattenAnnotations(doc, 'comments'));
@@ -320,7 +320,7 @@ export async function splitByBookmarks() {
     const files = [];
     for (const [i, g] of groups.entries()) files.push({ name: `${base(d.name)} ${i + 1} ${safe(g.title)}.pdf`, bytes: await ops.extract(doc, g.pages) });
     const where = await platform.saveMany(files, 'application/pdf');
-    if (where) showToast(`Saved ${files.length} files to ${where}`);
+    if (where) showSaved(`Saved ${files.length} files to ${where}`);
   });
 }
 
@@ -385,7 +385,7 @@ export async function saveObjectAsPng(page: number, bounds: { x: number; y: numb
     cut.getContext('2d')!.drawImage(canvas, Math.min(a[0], b[0]), Math.min(a[1], b[1]), cut.width, cut.height, 0, 0, cut.width, cut.height);
     return canvasBytes(cut, 'image/png');
   });
-  if (bytes) { const r = await platform.saveFile(`${base(d.name)} image.png`, bytes, 'image/png'); if (r) showToast(`Saved to ${r.label}`); }
+  if (bytes) { const r = await platform.saveFile(`${base(d.name)} image.png`, bytes, 'image/png'); if (r) showSaved(`Saved to ${r.label}`); }
 }
 
 // MARK: read aloud
@@ -455,7 +455,7 @@ export async function runBatch(files: { name: string; bytes: Uint8Array }[], whi
   });
   if (!out?.length) return;
   const where = await platform.saveMany(out, 'application/octet-stream');
-  if (where) { showToast(`Saved ${out.length} files to ${where}`); platform.notify('Batch finished', `${out.length} files`); }
+  if (where) { showSaved(`Saved ${out.length} files to ${where}`); platform.notify('Batch finished', `${out.length} files`); }
 }
 
 /** Read mode: only the pages, full screen; Escape or the button leaves it. */
