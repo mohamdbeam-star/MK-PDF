@@ -1,15 +1,19 @@
-## What's new in MK PDF 1.3.6
+## What's new in MK PDF 1.3.7
 
-**Editing (Mac)**
-- Arabic and other right-to-left text is read in the right order and with ordinary letters, so bilingual forms (licences, VAT certificates, contracts) edit correctly. Before, an Arabic label could pick up the text next to it.
-- Text in fonts that don't say what their letters are is read with on-device OCR instead of coming out as wrong characters.
-- Text drawn twice on top of itself (a fake bold) is one line of text, not a jumble of doubled letters.
-- Rotated scans (sideways pages) are made upright before *Make This Page Editable*, so recognised lines and edits land where you see them.
-- Table cells: longer text wraps inside its cell instead of running across the next column; amounts against the right of a cell, or in a right-aligned column, stay right-aligned; centred cells stay centred.
-- Line breaks you can see (addresses, lists, label columns) are kept when you edit a paragraph.
-- Editing no longer leaves a stray space behind among the new text, and Arabic text uses an Arabic font when the original isn't installed.
+**Scanned documents**
+- *Edit Text & Images* on a scanned page now recognises its text straight away; there's no need to find *Make This Page Editable* first.
+- Word export of scans keeps the page as it looks: the logo, table lines, stamps, signatures and handwriting stay as the scan's own picture behind the text, and the recognised text is real, editable Word text placed line by line where it is on the page (with the printed text painted out of the picture so nothing shows twice). Before, everything but the text was lost.
+- Handwriting (tall lines in coloured ink) stays part of the picture instead of becoming typed text, and logo shapes misread as letters are left out.
+- Recognised text gets a size that matches the scan's line width, so sizes no longer jump around.
+
+**Editing**
+- Text in table cells stays inside its row: longer text shrinks a little to fit a one-line cell instead of spilling onto the row below, and never wraps into a sliver (like a list number's gap).
+- Pages whose text is drawn mirrored twice over (some government forms and certificates) are now recognised as text: they edit directly instead of looking like scans.
 
 **Word export**
-- Arabic text in tables and paragraphs comes out whole and in reading order on every platform (Mac, Windows and Android).
+- Those mirrored-text pages export their text, and text in tables without lines spills over empty neighbouring columns instead of being squeezed letter by letter.
+- Table cells no longer cut words apart where the table's border pieces meet ("Co ver ed").
+- Photos stacked on each other (cover pages) come out as the picture you see, not the one underneath; text hidden under a cover photo stays hidden.
+- Arabic lines made of separate words come out in reading order on Windows and Android.
 
-Includes everything in 1.3.5: updates install themselves on every platform.
+Includes everything in 1.3.6.

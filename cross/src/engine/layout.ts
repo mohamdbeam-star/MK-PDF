@@ -44,7 +44,13 @@ export interface LayoutTable {
   ruled: boolean;
   borderColor?: [number, number, number];
 }
-export interface LayoutImage { kind: 'image'; rect: Rect; object: GraphicObject; data?: Uint8Array; ext?: 'jpeg' | 'png' }
+export interface LayoutImage {
+  kind: 'image'; rect: Rect; object: GraphicObject; data?: Uint8Array; ext?: 'jpeg' | 'png';
+  /** The page image of a scan with a recognised (invisible) text layer: shown behind the text, with that text painted out. */
+  scan?: boolean;
+  /** Pictures stacked on each other or with transparency: the area is rendered as it looks (without text). */
+  composite?: boolean;
+}
 export type LayoutItem = LayoutParagraph | LayoutTable | LayoutImage;
 
 export interface PageLayout {
@@ -146,6 +152,19 @@ export function textIn(source: TextItem[] | TextIndex, r: Rect): string {
   // unreliable (drawn far from where they read), so word gaps come from the letters' positions instead.
   const solid = hits.filter((h) => h.str.trim());
   const visual = solid.length > 1 && solid.some((h) => RTL.test(h.str)) && solid.every((h) => !h.rtl || Array.from(h.str.trim()).length <= 2);
+  // A line of right-to-left words (one item each) reads from the rightmost word.
+  const rtlWords = !visual && solid.length > 1 && solid.filter((h) => h.rtl).length > solid.length / 2;
+  if (rtlWords) {
+    const words = [...solid].sort((a, b) => b.x - a.x);
+    let s = '', lastStart: number | null = null;
+    for (const it of words) {
+      if (lastStart !== null && lastStart - (it.x + it.w) > it.h * 0.2 && !s.endsWith(' ')) s += ' ';
+      s += it.str;
+      lastStart = it.x;
+    }
+    const text = s.replace(/\s+/g, ' ').trim();
+    return /[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text) ? text.normalize('NFKC') : text;
+  }
   let out = '';
   let lastEnd: number | null = null;
   for (const it of visual ? solid : hits) {
@@ -266,7 +285,15 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
   const cropR = rect(crop.x, crop.y, crop.width, crop.height);
   const rotation = ((page.getRotation().angle % 360) + 360) % 360;
   const swap = rotation % 180 !== 0;
-  const glyphs = pc.glyphs.filter((g) => g.upright && g.size > 0.5 && g.rect.w > 0.01);
+  // Text that a large solid picture (a cover photo) drawn after it covers completely is hidden on the page, so it
+  // isn't text here either. (Thin strips such as table row backgrounds don't count: their order isn't reliable.)
+  const page0 = pc.page.getCropBox();
+  const solid = pc.objects.filter((o) => o.kind === 'image' && !pc.imageHasMask(o) && o.bounds.w * o.bounds.h > page0.width * page0.height * 0.2);
+  const hidden = new Set<Glyph>();
+  if (solid.length) for (const show of pc.shows) for (const g of show.glyphs) {
+    if (solid.some((o) => o.opIndex > show.opIndex && o.bounds.x <= g.rect.x && o.bounds.y <= g.rect.y && maxX(o.bounds) >= maxX(g.rect) && maxY(o.bounds) >= maxY(g.rect))) hidden.add(g);
+  }
+  const glyphs = pc.glyphs.filter((g) => g.upright && g.size > 0.5 && g.rect.w > 0.01 && !hidden.has(g));
   const center = (g: Glyph) => ({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 });
   const text = Array.isArray(items) ? indexText(alignItems(items, glyphs)) : null;
   const lookup = (r: Rect) => (text ? textIn(text, r) : (items as { textIn(r: Rect): string }).textIn(r).replace(/\s+/g, ' ').trim());
@@ -326,7 +353,9 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
 
   // 1. Ruled tables take the text inside their cells.
   const out: LayoutItem[] = [];
-  const grids = findGrids(pc.rules, pc.ruleColors, pc.fills, cropR);
+  // Runs of text (a row's pieces), so a column that's only implied by line joints doesn't cut through them.
+  const runsOfText = segmentRows(glyphs).flat().map((seg) => seg.filter((g) => !isSpace(g)).reduce<Rect | null>((a, g) => union(a, g.rect), null)).filter((r): r is Rect => !!r);
+  const grids = findGrids(pc.rules, pc.ruleColors, pc.fills, cropR, runsOfText);
   const inGrid = new Set<Glyph>();
   for (const grid of grids) {
     const own = glyphs.filter((g) => contains(grid.rect, center(g)));
@@ -434,8 +463,27 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
   };
   const midOf = (g: Glyph) => ({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 });
   const inBand = (g: Glyph) => (inAnyBox(g) ? undefined : bands.find((b) => contains(b.rect, midOf(g))));
-  flow(rest.filter((g) => !inBand(g)), cropR);
-  for (const b of bands) {
+  // A scan's recognised text sits over the scan's own picture of the page (tables, logos, signatures), so each
+  // recognised line stays exactly where it is: no reflowed paragraphs, guessed tables or columns to drift off it.
+  const ocrLayer = glyphs.length > 0 && glyphs.every((g) => g.invisible);
+  if (ocrLayer) {
+    // One paragraph per row of the scan, its pieces at their own positions (tab stops).
+    for (const row of segmentRows(rest)) {
+      const pieces = row.map(toLine).filter((l): l is LayoutLine => !!l).sort((a, b) => a.rect.x - b.rect.x);
+      if (!pieces.length) continue;
+      const line: LayoutLine = { ...pieces[0], parts: [], tabStops: [] };
+      for (const l of pieces.slice(1)) {
+        if (!line.parts.length) line.parts = [{ ...pieces[0], parts: [], tabStops: [] }];
+        line.parts.push(l);
+        line.tabStops.push(l.rect.x);
+        line.runs = [...line.runs, { ...l.runs[0], text: '\t' }, ...l.runs];
+        line.rect = union(line.rect, l.rect)!;
+      }
+      const rtl = pieces.length === 1 && isRTL(lineText(line));
+      out.push({ kind: 'paragraph', rect: line.rect, lines: [line], alignment: rtl ? 'right' : 'left', rtl, pitch: lineSize(line) * 1.2, onImage: true });
+    }
+  } else flow(rest.filter((g) => !inBand(g)), cropR);
+  for (const b of ocrLayer ? [] : bands) {
     const mine = rest.filter((g) => inBand(g) === b);
     // Each row splits where its own gap is (justified columns don't leave a perfectly straight gutter).
     const splitFor = (g: Glyph) => { const m = midOf(g); return b.splits.find((r) => m.y >= r.y0 && m.y <= r.y1)?.x ?? b.cols[1].x; };
@@ -445,11 +493,25 @@ export function layoutPage(doc: PDFDocument, index: number, items: PageText, con
 
   // 5. Images (skipping full-page backgrounds behind real text, e.g. OCR'd scans).
   const hasText = glyphs.length > 0;
+  // A scan with a recognised text layer: its page image carries the logos, lines, stamps and signatures.
+  const scanned = hasText && glyphs.every((g) => g.invisible);
+  const pictures: { rect: Rect; object: GraphicObject; composite: boolean }[] = [];
   for (const o of pc.objects) {
     if (o.kind === 'form' || o.bounds.w <= 4 || o.bounds.h <= 4 || !intersects(o.bounds, cropR)) continue;
-    if (hasText && o.bounds.w * o.bounds.h > cropR.w * cropR.h * 0.8) continue;
-    out.push({ kind: 'image', rect: o.bounds, object: o });
+    if (hasText && o.bounds.w * o.bounds.h > cropR.w * cropR.h * 0.8) {
+      if (scanned) out.push({ kind: 'image', rect: o.bounds, object: o, scan: true });
+      continue;
+    }
+    // Pictures stacked on each other (a photo with an overlay, layered artwork) become one picture of the area.
+    const area = (r: Rect) => r.w * r.h;
+    const over = pictures.find((p) => {
+      const ix = Math.min(maxX(p.rect), maxX(o.bounds)) - Math.max(p.rect.x, o.bounds.x), iy = Math.min(maxY(p.rect), maxY(o.bounds)) - Math.max(p.rect.y, o.bounds.y);
+      return ix > 0 && iy > 0 && ix * iy > Math.min(area(p.rect), area(o.bounds)) * 0.3;
+    });
+    if (over) { over.rect = union(over.rect, o.bounds)!; over.object = o; over.composite = true; continue; }
+    pictures.push({ rect: o.bounds, object: o, composite: pc.imageHasMask(o) });
   }
+  for (const p of pictures) out.push({ kind: 'image', rect: p.rect, object: p.object, ...(p.composite ? { composite: true } : {}) });
 
   // 6. Divider lines: long horizontal rules outside tables that don't underline text.
   const dividers: PageLayout['rules'] = [];
@@ -749,8 +811,12 @@ function buildTable(rows: LayoutLine[][]): LayoutTable {
     for (const [c, ls] of byCol) {
       const line: LayoutLine = ls.length === 1 ? { ...ls[0], runs: [...ls[0].runs] }
         : { ...ls[0], runs: ls.flatMap((l, i) => (i ? [{ ...l.runs[0], text: ' ' }, ...l.runs] : l.runs)), rect: ls.reduce<Rect>((a, l) => union(a, l.rect)!, ls[0].rect) };
-      const cellRect = rect(colEdges[c], rowRects[ri].y, colEdges[c + 1] - colEdges[c], rowRects[ri].h);
-      cells.push({ row: ri, col: c, rowSpan: 1, colSpan: 1, rect: cellRect, fill: null, borders: { top: false, bottom: false, left: false, right: false },
+      // Text wider than its column spills over the empty columns beside it (as in a spreadsheet), so it isn't
+      // squeezed into a sliver of a column that other rows set.
+      let end = c + 1;
+      while (end < starts.length && colEdges[end] < maxX(line.rect) + 2 && !byCol.has(end)) end++;
+      const cellRect = rect(colEdges[c], rowRects[ri].y, colEdges[end] - colEdges[c], rowRects[ri].h);
+      cells.push({ row: ri, col: c, rowSpan: 1, colSpan: end - c, rect: cellRect, fill: null, borders: { top: false, bottom: false, left: false, right: false },
         lines: [line], alignment: isRTL(lineText(line)) ? 'right' : 'left', valign: 'top', rtl: isRTL(lineText(line)), pitch: lineSize(line) * 1.2 });
     }
   });

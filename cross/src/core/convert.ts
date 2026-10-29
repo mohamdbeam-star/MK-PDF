@@ -17,8 +17,11 @@ export async function layoutsFor(bytes: Uint8Array, text: (page: number) => Prom
 
 const none: Assets = { image: async () => null, background: async () => null };
 
-export async function convertLayouts(pages: PageLayout[], format: DocFormat, title: string, assets: Assets = none): Promise<Uint8Array> {
+export async function convertLayouts(all: PageLayout[], format: DocFormat, title: string, assets: Assets = none): Promise<Uint8Array> {
   const enc = (s: string) => new TextEncoder().encode(s);
+  // A scan's page image goes behind its recognised text only in Word, and only where the app paints that text out.
+  const pages = format === 'docx' && assets.scanBackground ? all
+    : all.map((p) => ({ ...p, items: p.items.filter((i) => !(i.kind === 'image' && i.scan)) }));
   switch (format) {
     case 'docx': return docx(pages, assets);
     case 'pptx': return pptx(pages, assets);

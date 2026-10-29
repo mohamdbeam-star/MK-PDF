@@ -24,6 +24,44 @@ enum CoreConverter {
 
     static var isAvailable: Bool { scriptURL != nil }
 
+    /// A scan's rendering with its recognised (invisible) text lines painted out in the paper colour around each, so
+    /// the scan can sit behind the recognised text in Word without showing it twice. Other pages are unchanged.
+    static func withoutRecognisedText(_ image: CGImage, page: PDFPage, scale: CGFloat) -> CGImage {
+        guard let ref = page.pageRef else { return image }
+        let shows = PageContent(page: ref).shows.filter { !$0.glyphs.isEmpty && $0.glyphs.allSatisfy(\.invisible) }
+        guard !shows.isEmpty else { return image }
+        let w = image.width, h = image.height, crop = page.bounds(for: .cropBox)
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return image }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        for show in shows {
+            let b = show.bounds
+            // Recognised boxes hug the letters loosely: cover ascenders and descenders.
+            let area = CGRect(x: b.minX - 1.5, y: b.minY - b.height * 0.25, width: b.width + 3, height: b.height * 1.5)
+            let px = CGRect(x: (area.minX - crop.minX) * scale, y: (area.minY - crop.minY) * scale, width: area.width * scale, height: area.height * scale)
+                .integral.intersection(CGRect(x: 0, y: 0, width: w, height: h))
+            guard px.width > 2, px.height > 2 else { continue }
+            // Paper: the median of a ring just outside the box (the bitmap's rows run top to bottom).
+            var ring: [(UInt8, UInt8, UInt8)] = []
+            func sample(_ x: Int, _ yUp: Int) {
+                guard x >= 0, x < w, yUp >= 0, yUp < h else { return }
+                let o = ((h - 1 - yUp) * w + x) * 4
+                ring.append((data[o], data[o + 1], data[o + 2]))
+            }
+            let x0 = Int(px.minX) - 2, x1 = Int(px.maxX) + 1, y0 = Int(px.minY) - 2, y1 = Int(px.maxY) + 1
+            for x in stride(from: x0, through: x1, by: 2) { sample(x, y0); sample(x, y1) }
+            for y in stride(from: y0, through: y1, by: 2) { sample(x0, y); sample(x1, y) }
+            guard !ring.isEmpty else { continue }
+            ring.sort { Int($0.0) + Int($0.1) + Int($0.2) < Int($1.0) + Int($1.1) + Int($1.2) }
+            // The lighter half of the ring is paper (the darker part is often a neighbouring table line).
+            let paper = ring[min(ring.count - 1, ring.count * 3 / 4)]
+            ctx.setFillColor(red: CGFloat(paper.0) / 255, green: CGFloat(paper.1) / 255, blue: CGFloat(paper.2) / 255, alpha: 1)
+            ctx.fill(px)
+        }
+        return ctx.makeImage() ?? image
+    }
+
     /// `format` is one of docx, xlsx, pptx, html, md, txt, csv, rtf.
     static func convert(_ doc: PDFDocument, format: String, title: String) throws -> Data {
         guard let url = scriptURL, let source = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(errorDescription: "The conversion engine is missing from the app.") }
@@ -35,7 +73,7 @@ enum CoreConverter {
         var renders: [Int: (CGImage, CGRect, CGFloat)] = [:]
         let render: @convention(block) (Int, Double, Double, Double, Double) -> String? = { index, x, y, w, h in
             guard let page = copy.page(at: index) else { return nil }
-            if renders[index] == nil, let img = PageRenderer.image(of: page, dpi: 144) { renders[index] = (img, page.bounds(for: .cropBox), 2) }
+            if renders[index] == nil, let img = PageRenderer.image(of: page, dpi: 144) { renders[index] = (Self.withoutRecognisedText(img, page: page, scale: 2), page.bounds(for: .cropBox), 2) }
             guard let (img, crop, scale) = renders[index] else { return nil }
             let r = CGRect(x: (x - crop.minX) * scale, y: (crop.maxY - (y + h)) * scale, width: w * scale, height: h * scale).integral
                 .intersection(CGRect(x: 0, y: 0, width: img.width, height: img.height))
@@ -67,6 +105,22 @@ enum CoreConverter {
             return s.isEmpty ? nil : s
         }
         ctx.setObject(textIn, forKeyedSubscript: "nativeTextIn" as NSString)
+        // Stacked or transparent pictures: the area as the page shows it, without its text (Word gets the text).
+        var arts: [Int: CGImage] = [:]
+        let renderArt: @convention(block) (Int, Double, Double, Double, Double) -> String? = { index, x, y, w, h in
+            guard let page = copy.page(at: index) else { return nil }
+            if arts[index] == nil {
+                let source = ContentEditor.rewrite(page, edit: { $0.removeGlyphs { !$0.invisible } }) ?? page
+                arts[index] = PageRenderer.image(of: source, dpi: 144, annotations: false)
+            }
+            guard let img = arts[index] else { return nil }
+            let crop = page.bounds(for: .cropBox), scale: CGFloat = 2
+            let r = CGRect(x: (x - crop.minX) * scale, y: (crop.maxY - (y + h)) * scale, width: w * scale, height: h * scale).integral
+                .intersection(CGRect(x: 0, y: 0, width: img.width, height: img.height))
+            guard r.width >= 2, r.height >= 2, let cut = img.cropping(to: r) else { return nil }
+            return NSBitmapImageRep(cgImage: cut).representation(using: .png, properties: [:])?.base64EncodedString()
+        }
+        ctx.setObject(renderArt, forKeyedSubscript: "nativeRenderArt" as NSString)
         ctx.setObject(render, forKeyedSubscript: "nativeRender" as NSString)
         ctx.setObject(background, forKeyedSubscript: "nativeBackground" as NSString)
         let t0 = Date()

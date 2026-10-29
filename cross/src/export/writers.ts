@@ -16,7 +16,9 @@ const emu = (pt: number) => Math.round(pt * 12700);
 export interface ImageData { data: Uint8Array; ext: 'jpeg' | 'png' }
 /** Supplies picture data for layout images and page backgrounds (rendered by pdf.js in the app). */
 export interface Assets {
-  image(page: number, item: { rect: Rect }): Promise<ImageData | null>;
+  image(page: number, item: { rect: Rect; scan?: boolean; composite?: boolean }): Promise<ImageData | null>;
+  /** The app can render a scan's page image with its recognised text painted out (see LayoutImage.scan). */
+  scanBackground?: boolean;
   background(page: number, keepText: boolean): Promise<Uint8Array | null>;
 }
 

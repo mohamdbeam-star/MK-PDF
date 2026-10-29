@@ -37,6 +37,8 @@ export async function layouts(bytes: Uint8Array, js: PDFDocumentProxy): Promise<
 function assetsFor(doc: PDFDocument, js: PDFDocumentProxy): Assets {
   const renders = new Map<number, Promise<HTMLCanvasElement>>();
   const render = (i: number) => { if (!renders.has(i)) renders.set(i, renderPage(js, i, 2, { annotations: true })); return renders.get(i)!; };
+  const arts = new Map<number, Promise<HTMLCanvasElement>>();
+  const art = (i: number) => { if (!arts.has(i)) arts.set(i, textless().then((t) => renderPage(t, i, 2))); return arts.get(i)!; };
   let stripped: Promise<PDFDocumentProxy> | null = null;
   const textless = () => (stripped ??= (async () => {
     const copy = await loadPdf(await doc.save());
@@ -46,11 +48,12 @@ function assetsFor(doc: PDFDocument, js: PDFDocumentProxy): Assets {
   return {
     async image(page, item) {
       const obj = (item as { object?: import('../engine/pageContent').GraphicObject }).object;
-      if (obj) {
+      if (obj && !item.composite) {
         const info = new PageContent(doc, doc.getPage(page)).imageStream(obj);
         if (info?.jpeg) return { data: info.stream.getContents(), ext: 'jpeg' };
       }
-      const canvas = await render(page);
+      // Stacked or transparent pictures: the area as the page shows it, without its text (Word has that).
+      const canvas = item.composite ? await art(page) : await render(page);
       const pg = await js.getPage(page + 1);
       const vp = pg.getViewport({ scale: 2 });
       const r = item.rect as Rect;

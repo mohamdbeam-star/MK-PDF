@@ -52,7 +52,7 @@ function mergeV(segs: VSeg[]): VSeg[] {
 const light = (c: [number, number, number]) => c.every((v) => v > 0.97);
 
 /** Finds ruled tables on a page from its rules (thin lines and bars) and filled rectangles. */
-export function findGrids(rules: Rect[], ruleColors: [number, number, number][], fills: { rect: Rect; color: [number, number, number] }[], page: Rect): Grid[] {
+export function findGrids(rules: Rect[], ruleColors: [number, number, number][], fills: { rect: Rect; color: [number, number, number] }[], page: Rect, ink: Rect[] = []): Grid[] {
   let hs: HSeg[] = [], vs: VSeg[] = [];
   for (const r of rules) {
     if (r.w >= r.h && r.w > 3) hs.push({ y: r.y + r.h / 2, x0: r.x, x1: maxX(r) });
@@ -120,7 +120,10 @@ export function findGrids(rules: Rect[], ruleColors: [number, number, number][],
 
     const covers = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) >= (b1 - b0) * 0.7;
     // Is there a vertical line at column edge k across row i, or a horizontal line at row edge k across column j?
-    const vEdge = (i: number, k: number) => v.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i]));
+    // An edge that's only implied (no line drawn there) doesn't split a cell that text runs across.
+    const inkAcross = (i: number, k: number) => ink.some((g) => { const cy = g.y + g.h / 2; return cy < ys[i] && cy > ys[i + 1] && g.x < xs[k] - 1 && maxX(g) > xs[k] + 1; });
+    const vEdge = (i: number, k: number) => v.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i]))
+      && (drawnV.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i])) || !inkAcross(i, k));
     const hEdge = (k: number, j: number) => h.some((s) => Math.abs(s.y - ys[k]) <= TOL + 1 && covers(s.x0, s.x1, xs[j], xs[j + 1]));
     const vLine = (i: number, k: number) => drawnV.some((s) => Math.abs(s.x - xs[k]) <= TOL + 1 && covers(s.y0, s.y1, ys[i + 1], ys[i]));
     const hLine = (k: number, j: number) => drawnH.some((s) => Math.abs(s.y - ys[k]) <= TOL + 1 && covers(s.x0, s.x1, xs[j], xs[j + 1]));

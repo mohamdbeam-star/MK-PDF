@@ -466,11 +466,15 @@ public final class PageContent {
                         var tx = w0 * fs + gs.charSpacing
                         if n == 1 && code == 32 { tx += gs.wordSpacing }
                         tx *= th
-                        let toUser = tm.concatenating(gs.ctm)
-                        let local = CGRect(x: 0, y: metrics.descent * fs + gs.rise, width: max(w0 * fs * th, 0.01), height: (metrics.ascent - metrics.descent) * fs)
+                        // A negative font size (vertical flip) or horizontal scaling (horizontal flip) mirrors the glyphs;
+                        // inside a flipped page transform (a common PDF idiom) they read normally, so the flips go into
+                        // the transform.
+                        let sx: Double = fs * th < 0 ? -1 : 1, flip: Double = fs < 0 ? -1 : 1, afs = abs(fs)
+                        let toUser = CGAffineTransform(scaleX: sx, y: flip).concatenating(tm.concatenating(gs.ctm))
+                        let local = CGRect(x: 0, y: metrics.descent * afs + gs.rise * flip, width: max(w0 * abs(fs * th), 0.01), height: (metrics.ascent - metrics.descent) * afs)
                         let upright = abs(toUser.b) < 0.001 && abs(toUser.c) < 0.001 && toUser.a > 0 && toUser.d > 0
                         glyphs.append(Glyph(element: index, bytes: Data(bytes[k..<(k + n)]), rect: local.applying(toUser), displacement: tx,
-                                            origin: CGPoint(x: 0, y: gs.rise).applying(toUser), size: fs * Double(hypot(toUser.c, toUser.d)),
+                                            origin: CGPoint(x: 0, y: gs.rise * flip).applying(toUser), size: afs * Double(hypot(toUser.c, toUser.d)),
                                             upright: upright, fontResource: gs.fontName, color: gs.fill,
                                             invisible: gs.renderMode == 3 || gs.renderMode == 7))
                         tm = CGAffineTransform(translationX: tx, y: 0).concatenating(tm)

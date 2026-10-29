@@ -149,7 +149,7 @@ final class EditorModel: ObservableObject {
     var undoManager: UndoManager?
     var fileURL: URL?
 
-    @Published var tool: Tool = .select { didSet { pdfView?.toolDidChange() } }
+    @Published var tool: Tool = .select { didSet { pdfView?.toolDidChange(); recognizeScanIfEditing() } }
     @Published var color: NSColor = .systemYellow
     @Published var lineWidth: CGFloat = 2
     @Published var fontSize: CGFloat = 14
@@ -162,7 +162,17 @@ final class EditorModel: ObservableObject {
     @Published var organizing = false
     @Published var sheet: EditorSheet?
 
-    @Published var pageIndex = 0
+    @Published var pageIndex = 0 { didSet { if pageIndex != oldValue { recognizeScanIfEditing() } } }
+    /// Scanned pages already recognised automatically (or tried), so each is done once.
+    private var recognisedScans: Set<Int> = []
+
+    /// Editing a scanned page recognises its text straight away (no need to look for "Make This Page Editable").
+    private func recognizeScanIfEditing() {
+        guard tool == .editContent, currentPageHasNoText, !recognisedScans.contains(pageIndex) else { return }
+        recognisedScans.insert(pageIndex)
+        let page = pageIndex
+        DispatchQueue.main.async { self.runOCR(pages: [page], language: nil, accurate: true, skipTextPages: false) }
+    }
     @Published var scalePercent = 100
     @Published var displayMode: PDFDisplayMode = .singlePageContinuous { didSet { pdfView?.displayMode = displayMode } }
     @Published var nightMode = false

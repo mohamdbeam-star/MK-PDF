@@ -15,7 +15,7 @@ An app for viewing, editing, signing, organizing and converting PDFs, for **Mac,
 - **Images and drawings.** Drag to move, drag the corner to resize, press Delete to remove, *Replace image…* to swap in a new one, and *Save as PNG…* to export one.
 - **Fonts.** MK PDF uses the installed original font first, then fonts bundled with Microsoft Office (Calibri, Cambria, …), then the PDF's own embedded font if it contains every character you typed, and finally the closest system family.
 
-- **Scanned pages and drawings.** Pages with no real text show *Make This Page Editable*. Offline OCR recognizes the text; editing a line then paints over the old pixels in the paper colour and writes the new text in the ink colour.
+- **Scanned pages and drawings.** Editing a page with no real text recognizes it straight away with offline OCR (also available as *Make This Page Editable*); editing a line then paints over the old pixels in the paper colour and writes the new text in the ink colour.
 
 How it works: `Sources/MKPDFCore` parses each page's content stream and tracks the graphics and text state so every glyph and image has a position. Each glyph's text is read from its font (the ToUnicode map, else the encoding and glyph names), so tables and other text that PDFKit places off its glyphs are still found. Right-to-left text is put in reading order, text drawn twice as a fake bold is read once, and lines whose font doesn't say what its letters are are read with on-device OCR. It rewrites text-showing operators glyph by glyph, keeping the spacing of what remains. It then writes a new page that reuses the original fonts, images and other resources, so nothing is rasterized.
 

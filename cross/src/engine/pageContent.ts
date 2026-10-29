@@ -355,6 +355,12 @@ export class PageContent {
     return { stream: s, jpeg: filters.length === 1 && filters[0] === 'DCTDecode', width: lookupNumber(s.dict, 'Width') ?? 0, height: lookupNumber(s.dict, 'Height') ?? 0 };
   }
 
+  /** The image has a soft mask or mask (transparency), so its raw data isn't what the page shows. */
+  imageHasMask(o: GraphicObject): boolean {
+    const s = lookupDict(this.resources, 'XObject')?.lookup(PDFName.of(o.name));
+    return s instanceof PDFRawStream && (s.dict.has(PDFName.of('SMask')) || s.dict.has(PDFName.of('Mask')));
+  }
+
   baseFont(resource: string): string { return this.font(resource)?.baseFont ?? ''; }
 
   /** The embedded TrueType/OpenType program of a font resource, if any. */
@@ -463,12 +469,16 @@ export class PageContent {
             let tx = w0 * fs + gs.charSpacing;
             if (n === 1 && code === 32) tx += gs.wordSpacing;
             tx *= th;
-            const toUser = concat(tm, gs.ctm);
-            const local = rect(0, metrics.descent * fs + gs.rise, Math.max(w0 * fs * th, 0.01), (metrics.ascent - metrics.descent) * fs);
+            // A negative font size (vertical flip) or horizontal scaling (horizontal flip) mirrors the glyphs; inside a
+            // flipped page transform (a common PDF idiom) they read normally, so the flips go into the transform.
+            const sx = fs * th < 0 ? -1 : 1, sy = fs < 0 ? -1 : 1, afs = Math.abs(fs);
+            const toUser = concat(sx < 0 || sy < 0 ? [sx, 0, 0, sy, 0, 0] : IDENTITY, concat(tm, gs.ctm));
+            const flip = sy;
+            const local = rect(0, metrics.descent * afs + gs.rise * flip, Math.max(w0 * Math.abs(fs * th), 0.01), (metrics.ascent - metrics.descent) * afs);
             const upright = Math.abs(toUser[1]) < 0.001 && Math.abs(toUser[2]) < 0.001 && toUser[0] > 0 && toUser[3] > 0;
             glyphs.push({
               element: index, bytes: bytes.slice(k, k + n), rect: applyToRect(local, toUser), displacement: tx,
-              origin: applyToPoint(0, gs.rise, toUser), size: fs * Math.hypot(toUser[2], toUser[3]), upright,
+              origin: applyToPoint(0, gs.rise * flip, toUser), size: afs * Math.hypot(toUser[2], toUser[3]), upright,
               fontResource: gs.fontName, color: gs.fill, invisible: gs.renderMode === 3 || gs.renderMode === 7,
               ...(n === 2 && (code === 3 || code === 32) && metrics.notBlank.has(code) ? { blank: false } : {}),
             });

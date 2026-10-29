@@ -23,11 +23,14 @@ struct TextBlock {
     var wrapWidth: CGFloat? {
         if isMultiline { return rect.width + 2 }
         guard let cell else { return nil }
+        let room: CGFloat
         switch alignment {
-        case .right: return rect.maxX - cell.minX - 3
-        case .center: return cell.width - 4
-        default: return cell.maxX - rect.minX - 3
+        case .right: room = rect.maxX - cell.minX - 3
+        case .center: room = cell.width - 4
+        default: room = cell.maxX - rect.minX - 3
         }
+        // Wrapping in a sliver (a list number's gap) would stack letters; then the text just runs on.
+        return room >= font.pointSize * 4 ? room : nil
     }
 
     var firstBaseline: CGFloat { baselines.first ?? rect.maxY }
@@ -154,7 +157,12 @@ enum ContentEditor {
             let sides = walls.filter { $0.minY <= rect.midY && $0.maxY >= rect.midY }
             if let l = sides.filter({ $0.midX <= rect.minX + 1 }).max(by: { $0.midX < $1.midX }),
                let r = sides.filter({ $0.midX >= rect.maxX - 1 }).min(by: { $0.midX < $1.midX }) {
-                cell = CGRect(x: l.maxX, y: max(l.minY, r.minY), width: r.minX - l.maxX, height: min(l.maxY, r.maxY) - max(l.minY, r.minY))
+                // Its top and bottom: the row's lines just above and below the block, when the table has them.
+                var y0 = max(l.minY, r.minY), y1 = min(l.maxY, r.maxY)
+                let across = floors.filter { $0.minX < rect.maxX && $0.maxX > rect.minX }
+                if let below = across.filter({ $0.midY <= rect.minY + 0.5 }).map(\.midY).max() { y0 = max(y0, below) }
+                if let above = across.filter({ $0.midY >= rect.maxY - 0.5 }).map(\.midY).min() { y1 = min(y1, above) }
+                cell = CGRect(x: l.maxX, y: y0, width: r.minX - l.maxX, height: y1 - y0)
             }
             var alignment: NSTextAlignment = centered ? .center : (text.isRightToLeft ? .right : .left)
             if let cell, group.count == 1 {
@@ -428,9 +436,19 @@ extension EditorModel {
     /// Replaces a text block with new text, style and position, removing the original glyphs from the page.
     func commitTextEdit(page: PDFPage, original: TextBlock?, text: String, font: NSFont, color: NSColor,
                         alignment: NSTextAlignment, at origin: CGPoint, width: CGFloat?, box: CGFloat? = nil) {
-        let pitch = original?.pitch ?? font.pointSize * 1.2
+        var font = font, pitch = original?.pitch ?? font.pointSize * 1.2
         let rects = original?.lineRects.map { $0.insetBy(dx: -0.5, dy: -0.5) } ?? []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A one-line table cell with no room for a second line: longer text gets a little smaller (down to 70%)
+        // rather than wrapping onto the row below.
+        if let original, !original.isMultiline, let cell = original.cell, let width, cell.height < pitch * 1.8, !text.contains("\n") {
+            let measured = NSAttributedString(string: trimmed, attributes: [.font: font]).size().width
+            if measured > width {
+                let scale = max(0.7, width / measured)
+                font = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) ?? font
+                pitch *= scale
+            }
+        }
         // Scanned text is pixels: cover the old line with the paper colour and write in the ink colour.
         var patches: [CGRect] = [], paper = NSColor.white, ink = color
         if let original, original.scanned {

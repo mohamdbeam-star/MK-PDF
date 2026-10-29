@@ -147,6 +147,8 @@ extension EditorModel {
         guard let copy = PDFExporter.copy(of: pdf) else { return }
         let scanned = copy.pages.enumerated().filter { ($0.element.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.offset)
         guard ocr, !scanned.isEmpty else { return use(copy) }
+        // Rotated scans are recognised upright, so their text runs the way the page is read.
+        for i in scanned { if let page = copy.page(at: i), page.rotation % 360 != 0 { copy.replacePage(at: i, with: PageCompositor.upright(page)) } }
         run("Recognizing text…") { progress in
             var out: [(Int, [OCR.Line])] = []
             for (n, i) in scanned.enumerated() {
@@ -155,7 +157,10 @@ extension EditorModel {
             }
             return out
         } then: { results in
-            for (i, lines) in results where !lines.isEmpty {
+            for (i, found) in results {
+                // Handwriting stays part of the scan's picture rather than becoming typed text.
+                let lines = found.filter { !$0.handwritten }
+                guard !lines.isEmpty else { continue }
                 if let page = copy.page(at: i), let composed = PageCompositor.compose(page, overlay: { OCR.drawInvisibleText(lines, in: $0) }) {
                     copy.replacePage(at: i, with: composed)
                 }

@@ -6,6 +6,7 @@ import { convertLayouts, layoutsFor, type DocFormat } from './convert';
 
 declare const nativeRender: (page: number, x: number, y: number, w: number, h: number) => string | null;
 declare const nativeBackground: (page: number, keepText: boolean) => string | null;
+declare const nativeRenderArt: ((page: number, x: number, y: number, w: number, h: number) => string | null) | undefined;
 declare const nativeTextIn: ((page: number, x: number, y: number, w: number, h: number) => string | null) | undefined;
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -38,11 +39,18 @@ export async function convert(pdf: string, pagesJSON: string, format: DocFormat,
     ? { textIn: (r) => nativeTextIn(i, r.x, r.y, r.w, r.h) ?? '' } : text[i] ?? []);
   const { doc, pages } = await layoutsFor(bytes, source);
   const out = await convertLayouts(pages, format, title, {
+    scanBackground: true,
     async image(page, item) {
       const obj = (item as { object?: GraphicObject }).object;
-      const info = obj ? new PageContent(doc, doc.getPage(page)).imageStream(obj) : null;
+      // A scan's page image is rendered by the app, which paints out the recognised text.
+      const info = obj && !item.scan && !item.composite ? new PageContent(doc, doc.getPage(page)).imageStream(obj) : null;
       if (info?.jpeg) return { data: info.stream.getContents(), ext: 'jpeg' };
       const r = item.rect;
+      // Stacked or transparent pictures: the area as the page shows it, without its text (Word has that).
+      if (item.composite && typeof nativeRenderArt === 'function') {
+        const art = nativeRenderArt(page, r.x, r.y, r.w, r.h);
+        return art ? { data: fromBase64(art), ext: 'png' } : null;
+      }
       const png = nativeRender(page, r.x, r.y, r.w, r.h);
       return png ? { data: fromBase64(png), ext: 'png' } : null;
     },
