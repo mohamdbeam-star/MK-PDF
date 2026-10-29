@@ -20,7 +20,8 @@ export async function checkForUpdates(userInitiated = false) {
   try {
     const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { Accept: 'application/vnd.github+json' } });
     const list = (await r.json()) as { tag_name: string; html_url: string; body: string; draft: boolean; prerelease: boolean; assets: { name: string; browser_download_url: string }[] }[];
-    const want = platform.kind === 'windows' ? (n: string) => /win-x64\.exe$/i.test(n) : (n: string) => /\.apk$/i.test(n);
+    const want = platform.kind === 'windows' ? (n: string) => /win-x64\.exe$/i.test(n)
+      : platform.kind === 'ios' ? (n: string) => /\.ipa$/i.test(n) : (n: string) => /\.apk$/i.test(n);
     const best = list.filter((x) => !x.draft && !x.prerelease)
       .map((x) => ({ x, asset: x.assets.find((a) => want(a.name)) }))
       .filter((c) => c.asset)
@@ -57,7 +58,7 @@ export function UpdateBanner() {
         showToast('Downloading the update…');
         try { await platform.installUpdate(u.asset, u.name); } catch (e) { showToast(e instanceof Error ? e.message : String(e)); }
       }}>
-        {platform.kind === 'android' ? 'Install' : 'Download & Install'}
+        {platform.kind === 'android' ? 'Install' : platform.kind === 'ios' ? 'Download' : 'Download & Install'}
       </button>
       <button class="icon-btn" title="Skip this version" onClick={() => { localStorage.setItem('mkpdf.skip', u.version); update.value = null; }}>✕</button>
     </div>

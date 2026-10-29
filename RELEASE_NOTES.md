@@ -1,19 +1,21 @@
-## What's new in MK PDF 1.3.7
+## What's new in MK PDF 1.3.8
 
-**Scanned documents**
-- *Edit Text & Images* on a scanned page now recognises its text straight away; there's no need to find *Make This Page Editable* first.
-- Word export of scans keeps the page as it looks: the logo, table lines, stamps, signatures and handwriting stay as the scan's own picture behind the text, and the recognised text is real, editable Word text placed line by line where it is on the page (with the printed text painted out of the picture so nothing shows twice). Before, everything but the text was lost.
-- Handwriting (tall lines in coloured ink) stays part of the picture instead of becoming typed text, and logo shapes misread as letters are left out.
-- Recognised text gets a size that matches the scan's line width, so sizes no longer jump around.
+**MK PDF for iPhone and iPad**
+- A new iPhone and iPad app with the same features as Windows and Android: edit text and images, comment, sign, organize, protect, OCR, compress and export to Word, Excel, PowerPoint and more.
+- Open PDFs from Files, Mail or any app's share sheet; saved files are in **Files › On My iPhone › MK PDF**; scan paper with the camera.
+- Translate documents on the device with Apple's translator (iOS 18 or later).
+- The release has `MK-PDF-1.3.8-iphone.ipa`, unsigned: sign and install it with a sideloading tool such as AltStore or Sideloadly (see the README).
 
-**Editing**
-- Text in table cells stays inside its row: longer text shrinks a little to fit a one-line cell instead of spilling onto the row below, and never wraps into a sliver (like a list number's gap).
-- Pages whose text is drawn mirrored twice over (some government forms and certificates) are now recognised as text: they edit directly instead of looking like scans.
+**Windows, Android and iPhone now have the Mac's features**
+- View: page layouts (continuous, single page, two pages, two pages with a cover), right-to-left two-page reading, night reading mode, read mode (full screen) and read aloud.
+- Bookmarks: add a bookmark for the current page, rename and delete bookmarks; split a document by its bookmarks.
+- Comments: export a comment summary, and flatten comments into the pages.
+- Organize: replace a page with a page of another PDF.
+- Edit: cover and retype text inside scans or drawings, and save an image on the page as a PNG.
+- Forms: a list of the form's fields, each with rename and delete.
+- Export: Word 97 (.doc) and OpenDocument (.odt), plus flattened (print-ready), grayscale and PDF/X-3 PDFs, and selected pages as a PDF.
+- Compress: check how small the file will get before compressing.
+- Batch processing: compress, recognize text, number pages, watermark, protect, rotate, flatten, remove metadata or convert many PDFs at once.
+- Check for updates on demand.
 
-**Word export**
-- Those mirrored-text pages export their text, and text in tables without lines spills over empty neighbouring columns instead of being squeezed letter by letter.
-- Table cells no longer cut words apart where the table's border pieces meet ("Co ver ed").
-- Photos stacked on each other (cover pages) come out as the picture you see, not the one underneath; text hidden under a cover photo stays hidden.
-- Arabic lines made of separate words come out in reading order on Windows and Android.
-
-Includes everything in 1.3.6.
+Includes everything in 1.3.7.

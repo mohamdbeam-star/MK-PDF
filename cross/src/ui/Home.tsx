@@ -9,7 +9,7 @@ export function Home() {
     { title: 'Create Blank', detail: 'Start a new empty PDF', icon: 'new', tint: '#5b5ce6', run: actions.createBlank },
     { title: 'Combine Files', detail: 'Merge PDFs and images', icon: 'combine', tint: '#a259f0', run: () => actions.combineFiles() },
     { title: 'Images to PDF', detail: 'Photos and scans to one PDF', icon: 'images', tint: '#f08a24', run: () => actions.imagesToPdf(false) },
-    ...(platform.kind === 'android' ? [{ title: 'Scan', detail: 'Use the camera to scan paper', icon: 'camera', tint: '#1fb58f', run: () => actions.imagesToPdf(true) }] : []),
+    ...(platform.mobile ? [{ title: 'Scan', detail: 'Use the camera to scan paper', icon: 'camera', tint: '#1fb58f', run: () => actions.imagesToPdf(true) }] : []),
     { title: 'Compare Files', detail: 'Find differences between two PDFs', icon: 'compare', tint: '#e94b7a', run: () => (dialog.value = { kind: 'compare' }) },
     { title: 'Repair PDF', detail: 'Recover a damaged file', icon: 'repair', tint: '#7a7f8c', run: actions.repairFile },
   ];
@@ -29,7 +29,7 @@ export function Home() {
             </button>
           ))}
         </div>
-        <p class="muted drop-hint">…or drop PDF files anywhere in this window.</p>
+        {!platform.mobile && <p class="muted drop-hint">…or drop PDF files anywhere in this window.</p>}
       </div>
       <aside class="recents glass">
         <div class="recents-head"><b>Recent</b>{recents.value.length > 0 && <button class="link" onClick={clearRecents}>Clear</button>}</div>

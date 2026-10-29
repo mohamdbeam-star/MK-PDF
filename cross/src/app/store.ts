@@ -9,7 +9,7 @@ export type Tool =
   | 'select' | 'hand' | 'editContent'
   | 'highlight' | 'underline' | 'strikeout' | 'note' | 'text' | 'ink' | 'rect' | 'oval' | 'line' | 'arrow' | 'eraser'
   | 'stamp' | 'check' | 'cross' | 'dot' | 'date'
-  | 'whiteout' | 'link' | 'crop' | 'redact' | 'textField' | 'checkbox' | 'dropdown';
+  | 'whiteout' | 'retype' | 'link' | 'crop' | 'redact' | 'textField' | 'checkbox' | 'dropdown';
 
 export type Panel = 'edit' | 'comment' | 'sign' | 'organize' | 'forms' | 'redact' | 'protect' | 'ocr' | 'compress' | 'export' | 'more';
 
@@ -20,7 +20,7 @@ export const TOOL_INFO: Record<Tool, { title: string; icon: string }> = {
   rect: { title: 'Rectangle', icon: 'square' }, oval: { title: 'Oval', icon: 'circle' }, line: { title: 'Line', icon: 'line' }, arrow: { title: 'Arrow', icon: 'arrow' },
   eraser: { title: 'Eraser', icon: 'eraser' }, stamp: { title: 'Place', icon: 'stamp' }, check: { title: 'Checkmark', icon: 'check' },
   cross: { title: 'Cross', icon: 'x' }, dot: { title: 'Dot', icon: 'dot' }, date: { title: 'Date', icon: 'calendar' },
-  whiteout: { title: 'Whiteout', icon: 'whiteout' }, link: { title: 'Link', icon: 'link' }, crop: { title: 'Crop', icon: 'crop' },
+  whiteout: { title: 'Whiteout', icon: 'whiteout' }, retype: { title: 'Cover & Retype', icon: 'textbox' }, link: { title: 'Link', icon: 'link' }, crop: { title: 'Crop', icon: 'crop' },
   redact: { title: 'Mark for Redaction', icon: 'eyeoff' }, textField: { title: 'Text Field', icon: 'field' }, checkbox: { title: 'Checkbox', icon: 'checkbox' },
   dropdown: { title: 'Dropdown', icon: 'dropdown' },
 };
@@ -46,6 +46,19 @@ effect(() => { if (showPanel.value && narrow()) showSidebar.value = false; });
 effect(() => { if (showSidebar.value && narrow()) showPanel.value = false; });
 export const sidebarMode = signal<'thumbs' | 'outline' | 'comments' | 'search'>('thumbs');
 export const organizing = signal(false);
+
+// View options (remembered): page layout, right-to-left spreads, night mode; read mode hides everything but pages.
+export type Layout = 'continuous' | 'single' | 'two' | 'twoCover';
+const stored = <T,>(key: string, fallback: T) => { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } };
+export const layout = signal<Layout>(stored('mkpdf.layout', 'continuous'));
+export const rightToLeft = signal<boolean>(stored('mkpdf.rtl', false));
+export const nightMode = signal<boolean>(stored('mkpdf.night', false));
+export const readMode = signal(false);
+effect(() => {
+  localStorage.setItem('mkpdf.layout', JSON.stringify(layout.value));
+  localStorage.setItem('mkpdf.rtl', JSON.stringify(rightToLeft.value));
+  localStorage.setItem('mkpdf.night', JSON.stringify(nightMode.value));
+});
 
 export const color = signal<[number, number, number]>([1, 0.84, 0.1]);
 export const lineWidth = signal(2);

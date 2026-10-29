@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { render } from 'preact';
 import { AnnotationMode } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
+import { EventBus, PDFFindController, PDFLinkService, PDFViewer, ScrollMode, SpreadMode } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import 'pdfjs-dist/legacy/web/pdf_viewer.css';
 import type { DocModel } from '../pdf/doc';
-import { pageIndex, scale, search, searchResults, tool } from '../app/store';
+import { layout, nightMode, pageIndex, rightToLeft, scale, search, searchResults, tool } from '../app/store';
 import { edit } from '../app/actions';
 import * as annots from '../pdf/annots';
 import { PageOverlay } from './Overlay';
@@ -94,6 +94,19 @@ export function Viewer({ doc }: { doc: DocModel }) {
     return () => document.removeEventListener('pointerup', onUp);
   }, []);
 
+  // Page layout: continuous scrolling, one page at a time, or two pages side by side (optionally a cover first).
+  const l = layout.value;
+  useEffect(() => {
+    const a = api.current;
+    if (!a) return;
+    const apply = () => {
+      a.viewer.scrollMode = l === 'single' ? ScrollMode.PAGE : l === 'continuous' ? ScrollMode.VERTICAL : ScrollMode.WRAPPED;
+      a.viewer.spreadMode = l === 'two' ? SpreadMode.ODD : l === 'twoCover' ? SpreadMode.EVEN : SpreadMode.NONE;
+      if (l !== 'continuous') a.viewer.currentScaleValue = 'page-fit';
+    };
+    if (a.viewer.pagesCount) apply(); else a.bus.on('pagesinit', apply);
+  }, [l, doc, version]);
+
   // Search box drives pdf.js's find controller.
   const q = search.value;
   useEffect(() => {
@@ -105,7 +118,7 @@ export function Viewer({ doc }: { doc: DocModel }) {
 
   const hand = tool.value === 'hand';
   return (
-    <div ref={container} class={`viewer-container ${hand ? 'hand' : ''}`} data-tool={tool.value}
+    <div ref={container} class={`viewer-container ${hand ? 'hand' : ''} ${nightMode.value ? 'night' : ''} ${rightToLeft.value ? 'rtl-spreads' : ''}`} data-tool={tool.value}
       onPointerDown={hand ? (e) => startPan(e, container.current!) : undefined}>
       <div ref={inner} class="pdfViewer" />
     </div>

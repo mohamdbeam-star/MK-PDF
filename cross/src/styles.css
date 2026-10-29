@@ -264,8 +264,10 @@ progress { width: 220px; accent-color: var(--accent); }
   .compare-body { flex-direction: column; }
   .compare-list { width: auto; max-height: 30vh; }
 }
-html[data-platform='android'] .tabs { padding-top: max(8px, env(safe-area-inset-top)); }
-html[data-platform='android'] .workspace { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+html[data-platform='android'] .tabs, html[data-platform='ios'] .tabs { padding-top: max(8px, env(safe-area-inset-top)); }
+html[data-platform='android'] .workspace, html[data-platform='ios'] .workspace { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+/* iPhone: clear the notch and rounded corners in landscape too. */
+html[data-platform='ios'] .app { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
 @media (hover: hover) { .glass-btn.prominent:hover:not(:disabled) { background: linear-gradient(135deg, var(--accent), var(--accent-2)); filter: brightness(1.08); } }
 @media (hover: hover) { .glass-btn.danger:hover:not(:disabled) { background: linear-gradient(135deg, #e53935, #c62828); filter: brightness(1.08); } }
 .toolbar, .toolbar .group { white-space: nowrap; flex-shrink: 0; }
@@ -283,3 +285,27 @@ html[data-platform='android'] .panel, html[data-platform='android'] .sheet { bac
 @media (prefers-color-scheme: dark) {
   html[data-platform='android'] .panel, html[data-platform='android'] .sheet { background: rgba(30, 28, 38, 0.97); }
 }
+
+
+/* Night mode: pages inverted for reading in the dark (the hue turn keeps pictures' colours roughly right). */
+.viewer-container.night .page canvas { filter: invert(1) hue-rotate(180deg); }
+/* Right-to-left two-page spreads: the first page of each pair on the right. */
+.viewer-container.rtl-spreads .pdfViewer .spread { display: inline-flex !important; flex-direction: row-reverse; justify-content: center; }
+/* Read mode: only the pages, full screen. */
+.app.reading .toolbar, .app.reading .sidebar, .app.reading .panel, .app.reading .tabs, .app.reading .update, .app.reading .fab { display: none !important; }
+.exit-reading { position: fixed; top: 12px; right: 12px; z-index: 50; }
+
+/* Bookmarks with rename/delete; form field list. */
+.outline-row { display: flex; align-items: center; }
+.outline-row .outline-item { flex: 1; min-width: 0; }
+.outline-row .icon-btn.small { opacity: 0; padding: 4px; }
+.outline-row:hover .icon-btn.small { opacity: 0.8; }
+.add-bookmark { margin: 10px; }
+.field-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; max-height: 240px; overflow: auto; }
+.field-row { display: flex; align-items: center; gap: 4px; }
+.field-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+.batch-files { list-style: none; margin: 8px 0; padding: 0; max-height: 180px; overflow: auto; font-size: 13px; }
+.batch-files li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0; }
+
+textarea.translation { width: 100%; min-height: 50vh; resize: vertical; font: inherit; }

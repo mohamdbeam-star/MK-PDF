@@ -1,10 +1,10 @@
 # MK PDF
 
-An app for viewing, editing, signing, organizing and converting PDFs, for **Mac, Windows and Android**. You can **edit the real text and images in a PDF**, not just draw on top of it, including scanned pages.
+An app for viewing, editing, signing, organizing and converting PDFs, for **Mac, Windows, Android and iPhone**. You can **edit the real text and images in a PDF**, not just draw on top of it, including scanned pages.
 
 - **Mac:** native SwiftUI app with PDFKit, Vision and Core Text, plus its own PDF content engine (`Sources`).
-- **Windows and Android:** the same features in a shared app (`cross/`), wrapped by Electron on Windows and Capacitor on Android.
-- **Conversions** (Word, Excel, PowerPoint, HTML, Markdown, text, CSV, RTF) use one engine on every platform (`cross/src/core`); the Mac app runs it in JavaScriptCore.
+- **Windows, Android and iPhone:** the same features in a shared app (`cross/`), wrapped by Electron on Windows and Capacitor on Android and iPhone.
+- **Conversions** (Word, Word 97, OpenDocument, Excel, PowerPoint, HTML, Markdown, text, CSV, RTF) use one engine on every platform (`cross/src/core`); the Mac app runs it in JavaScriptCore.
 
 ## Editing existing content (Edit PDF → Edit Text & Images, ⇧⌘E)
 
@@ -37,7 +37,8 @@ How it works: `Sources/MKPDFCore` parses each page's content stream and tracks t
 | Export | Rebuilt from each page's layout (paragraphs, fonts, colours, alignment, RTL, tables, images): Word (.docx/.doc), PowerPoint (editable text over the page artwork), Excel, HTML (exact layout, selectable text), RTF, OpenDocument, Markdown, text, CSV; PNG / JPEG / HEIC / WebP / TIFF / BMP / GIF pages; flattened, grayscale and PDF/X-3 |
 | Create | Blank, combine files, images to PDF, Word/RTF/HTML/text to PDF, web page to PDF, clipboard to PDF |
 | Compare | Side-by-side view with a word-level change list |
-| AI Assistant | Mac only: summaries and questions answered on-device with Apple Intelligence, with a text-search fallback when Apple Intelligence is off. Not on Windows/Android, which have no free on-device model that runs well on typical hardware. |
+| AI Assistant | Mac only: summaries and questions answered on-device with Apple Intelligence, with a text-search fallback when Apple Intelligence is off. Not on Windows/Android/iPhone, which have no free on-device model that runs well on typical hardware. |
+| Translate | Mac and iPhone (iOS 18 or later): on-device with Apple's translator. Not on Windows/Android, which have no free on-device translator. |
 | Batch | Run one tool on many PDFs: compress, OCR, page numbers, watermark, password, rotate, flatten, remove metadata, convert to JPG / Word / Excel / text |
 | Convert | Excel (tables become rows and columns) and PowerPoint (one slide per page), with optional OCR for scanned pages; extract embedded images (JPEGs saved unchanged) |
 | Repair | Rebuild every page of a damaged PDF through the content engine |
@@ -52,8 +53,9 @@ From [Releases](https://github.com/mohamdbeam-star/MK-PDF/releases):
 - **Mac:** `MK-PDF-x.y.z.dmg`. Open it and drag **MK PDF** into Applications. The build is ad-hoc signed, so the first time, right-click the app and choose **Open**.
 - **Windows:** `MK-PDF-x.y.z-win-x64.exe` installs for the current user only, with no administrator rights. `MK-PDF-x.y.z-portable.exe` runs without installing. SmartScreen may warn about an unsigned app: choose **More info → Run anyway**.
 - **Android:** `MK-PDF-x.y.z-android.apk`. Open it on the phone; Android asks once to allow installs from your browser or files app.
+- **iPhone and iPad:** `MK-PDF-x.y.z-iphone.ipa` is unsigned: Apple only runs apps signed with a developer account. Sign and install it with a sideloading tool such as AltStore or Sideloadly and your Apple ID. With a free Apple ID the app must be re-signed every 7 days (the tool can do it automatically); with a paid Apple Developer account, once a year. Saved files are in **Files › On My iPhone › MK PDF**.
 
-Every copy checks for a newer release at launch, every hour and when it comes to the front, and installs it over itself: nothing to uninstall. On Android the first update asks once to allow MK PDF to install apps.
+Every copy checks for a newer release at launch, every hour and when it comes to the front, and installs it over itself: nothing to uninstall. On Android the first update asks once to allow MK PDF to install apps. On iPhone the update downloads the new `.ipa`, to sign and install like the first time.
 
 ## Release (no Mac needed)
 
@@ -64,7 +66,7 @@ echo 1.3.0 > VERSION          # then write RELEASE_NOTES.md, commit and push
 git tag v1.3.0 && git push origin v1.3.0
 ```
 
-The workflow builds the Mac DMG (Apple Silicon + Intel), the Windows installer and portable app, and the Android APK. It tests each one and publishes them together as release `v1.3.0`; you can also start it from **Actions → Release → Run workflow**. `.github/workflows/ci.yml` runs the tests on every push.
+The workflow builds the Mac DMG (Apple Silicon + Intel), the Windows installer and portable app, the Android APK and the unsigned iPhone app. It tests each one and publishes them together as release `v1.3.0`; you can also start it from **Actions → Release → Run workflow**. `.github/workflows/ci.yml` runs the tests on every push.
 
 ### Android signing (one time)
 
@@ -89,6 +91,7 @@ npm run dev             # in a browser
 npm run electron        # the Windows shell (also runs on Mac/Linux)
 npm run dist:win        # Windows installer + portable exe (on Windows)
 npm run android:sync    # copy the app into cross/android, then build with Gradle or Android Studio
+npm run build && npx cap sync ios   # copy the app into cross/ios, then open cross/ios/App/App.xcodeproj in Xcode
 ```
 
 ## Tests

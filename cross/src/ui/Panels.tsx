@@ -13,6 +13,8 @@ import { DOC_FORMATS } from '../pdf/exporter';
 import { platform } from '../app/platform';
 import { Icon } from './icons';
 import { signatures, deleteSignature, stampImage, STAMPS } from './signatures';
+import { layout, nightMode, rightToLeft, Layout } from '../app/store';
+import { listFields, FieldInfo } from '../pdf/extras';
 
 const PALETTE: [number, number, number][] = [[1, 0.84, 0.1], [0.3, 0.85, 0.4], [0.25, 0.55, 1], [1, 0.35, 0.6], [1, 0.55, 0.15], [0.6, 0.35, 0.95], [0.9, 0.15, 0.15], [0, 0, 0]];
 const css = (c: number[]) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`;
@@ -129,12 +131,14 @@ function EditPanel() {
           const [f] = await platform.openFiles('image/*', false);
           if (f) await actions.edit('Replace Image', (d) => editing.replaceObject(d, o.page, o.object, f.bytes));
         }} />
+        <Row icon="download" title="Save as PNG…" onClick={() => actions.saveObjectAsPng(o.page, o.object.bounds)} />
         <Row icon="trash" title="Delete image" onClick={() => actions.edit('Delete Image', (d) => editing.deleteObject(d, o.page, o.object))} />
       </div>}
       {editStyle.value && <p class="hint">Style the text with the bar above it, then press Done.</p>}
       <H>Add</H>
       <Tools tools={['select', 'text', 'whiteout', 'link', 'crop', 'ink']} />
       <Row icon="image" title="Add image…" onClick={pickPicture} />
+      <Row icon="textbox" title="Cover and retype selected text" detail="For text inside scans or drawings: drag a box over it" onClick={() => { tool.value = 'retype'; showToast('Drag a box over the text to replace.'); }} />
       <H>Page design</H>
       <Row icon="droplet" title="Watermark…" onClick={() => (dialog.value = { kind: 'watermark' })} />
       <Row icon="heading" title="Header & footer…" onClick={() => (dialog.value = { kind: 'headerFooter' })} />
@@ -169,6 +173,8 @@ function CommentPanel() {
         }}>{s.title}</button>)}
       </div>
       <H>Comments</H>
+      <Row icon="output" title="Export comment summary…" detail="Page, type, author and text of every comment" onClick={actions.exportCommentSummary} />
+      <Row icon="layers" title="Flatten comments into pages" detail="Makes them part of the page" onClick={actions.flattenComments} />
       <Row icon="trash" title="Delete all comments" onClick={() => {
         if (confirm('Delete all comments?')) void actions.edit('Delete Comments', (d) => {
           for (const a of annots.listAnnots(d).filter(annots.isComment).sort((x, y) => y.page - x.page || y.index - x.index)) annots.deleteAnnot(d, a);
@@ -220,6 +226,7 @@ function OrganizePanel() {
       <Row icon="plus" title="Insert blank page" onClick={() => actions.edit('Insert Page', (d) => ops.insertBlank(d, i))} />
       <Row icon="combine" title="Insert from file…" onClick={() => actions.insertFromFiles(i)} />
       <Row icon="copy" title="Duplicate page" onClick={() => actions.edit('Duplicate', (d) => ops.duplicate(d, [i]))} />
+      <Row icon="replace" title="Replace page…" detail="With a page of another PDF" onClick={actions.replaceCurrentPage} />
       <H>Document</H>
       <Row icon="output" title="Extract pages…" onClick={async () => {
         const n = active.value?.js?.numPages ?? 1;
@@ -228,9 +235,32 @@ function OrganizePanel() {
         if (pages) await actions.extractPagesTo(pages);
       }} />
       <Row icon="scissors" title="Split document…" onClick={() => (dialog.value = { kind: 'split' })} />
+      <Row icon="bookmark" title="Split by bookmarks" detail="One file per top-level bookmark" onClick={actions.splitByBookmarks} />
       <Row icon="combine" title="Combine with other files…" onClick={() => actions.insertFromFiles((active.value?.js?.numPages ?? 1) - 1)} />
       <Row icon="reverse" title="Reverse page order" onClick={() => actions.edit('Reverse', (d) => ops.reorder(d, d.getPageIndices().reverse()))} />
       <Row icon="crop" title="Crop pages" detail="Drag a box on the page" onClick={() => (tool.value = 'crop')} />
+    </>
+  );
+}
+
+/** The document's form fields, each with rename and delete. */
+function FieldList() {
+  const d = active.value;
+  const [fields, setFields] = useState<FieldInfo[]>([]);
+  useEffect(() => { if (d) void d.library().then((doc) => setFields(listFields(doc))); }, [d, d?.version.value]);
+  if (!fields.length) return null;
+  return (
+    <>
+      <H>{`${fields.length} field${fields.length === 1 ? '' : 's'}`}</H>
+      <div class="field-list">
+        {fields.map((f) => (
+          <div class="field-row" key={f.name}>
+            <span class="field-name" title={f.kind}>{f.name}</span>
+            <button class="icon-btn" title="Rename" onClick={() => actions.renameFieldNamed(f.name)}><Icon name="rename" /></button>
+            <button class="icon-btn" title="Delete field" onClick={() => actions.deleteFieldNamed(f.name)}><Icon name="trash" /></button>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
@@ -240,6 +270,7 @@ function FormsPanel() {
     <>
       <p class="hint">Choose a field type and drag on the page.</p>
       <Tools tools={['select', 'textField', 'checkbox', 'dropdown']} />
+      <FieldList />
       <Row icon="eraser" title="Clear form" onClick={() => actions.edit('Clear Form', ops.clearForm)} />
       <Row icon="layers" title="Flatten form" onClick={() => actions.edit('Flatten Form', ops.flattenForms)} />
     </>
@@ -311,13 +342,14 @@ function OcrPanel() {
       <label class="check"><input type="checkbox" checked={skip} onChange={(e) => setSkip((e.target as HTMLInputElement).checked)} /> Skip pages that already have text</label>
       <button class="glass-btn prominent" onClick={() => actions.runOcr(all ? null : [pageIndex.value], lang, skip)}>Recognize text</button>
       <H>Scan</H>
-      <Row icon="camera" title={platform.kind === 'android' ? 'Scan with camera' : 'Images to PDF…'} onClick={() => actions.imagesToPdf(platform.kind === 'android')} />
+      <Row icon="camera" title={platform.mobile ? 'Scan with camera' : 'Images to PDF…'} onClick={() => actions.imagesToPdf(platform.mobile)} />
     </>
   );
 }
 
 function CompressPanel() {
   const [preset, setPreset] = useState<Preset>('balanced');
+  const [estimate, setEstimate] = useState<string | null>(null);
   return (
     <>
       <p class="hint">Reduce the file size for sharing and email.</p>
@@ -325,6 +357,12 @@ function CompressPanel() {
         <label class="radio" key={p.id}><input type="radio" name="preset" checked={preset === p.id} onChange={() => setPreset(p.id)} />
           <span><b>{p.title}</b><small>{p.detail}</small></span></label>
       ))}
+      <button class="glass-btn" onClick={async () => {
+        const r = await actions.estimateCompression(preset);
+        const mb = (n: number) => `${(n / 1_048_576).toFixed(2)} MB`;
+        setEstimate(r ? `${mb(r.before)} now → about ${mb(r.after)} (${Math.round((1 - r.after / r.before) * 100)}% smaller)` : null);
+      }}>Check size</button>
+      {estimate && <p class="hint">{estimate}</p>}
       <button class="glass-btn prominent" onClick={() => actions.compressActive(preset)}>Compress</button>
     </>
   );
@@ -342,20 +380,62 @@ function ExportPanel() {
       <label>Quality <input type="range" min="0.3" max="1" step="0.05" value={q} onInput={(e) => setQ(Number((e.target as HTMLInputElement).value))} /> <span>{Math.round(q * 100)}%</span></label>
       <div class="chips">{(['png', 'jpeg', 'webp'] as const).map((t) => <button key={t} class="glass-btn" onClick={() => actions.exportPageImages(t, dpi, q)}>{t.toUpperCase()}</button>)}</div>
       <Row icon="image" title="Extract embedded images" detail="Original JPEGs are saved unchanged" onClick={actions.extractImages} />
+      <H>PDF</H>
+      <Row icon="output" title="Selected pages as PDF…" onClick={async () => {
+        const n = active.value?.js?.numPages ?? 1;
+        const r = await (await import('../app/store')).prompt('Selected pages as PDF', `1-${n}`, 'Pages, e.g. 1-3, 6');
+        const pages = r ? ops.parseRanges(r, n) : null;
+        if (pages) await actions.extractPagesTo(pages);
+      }} />
+      <Row icon="print" title="Flattened PDF (print-ready)" detail="Comments and form fields merged into the pages" onClick={() => actions.savePdfVariant('flattened')} />
+      <Row icon="gray" title="Grayscale PDF" detail="Text stays selectable" onClick={() => actions.savePdfVariant('grayscale')} />
+      <Row icon="filetype" title="PDF/X-3 for print" onClick={() => actions.savePdfVariant('pdfx')} />
+      <H>Other</H>
       <Row icon="imageminus" title="Remove all images" onClick={() => { if (confirm('Remove all images from every page?')) void actions.edit('Remove Images', editing.removeAllImages); }} />
     </>
   );
 }
 
+/** On-device translation (iPhone). */
+function Translate() {
+  const [to, setTo] = useState('en');
+  return (
+    <>
+      <H>Translate</H>
+      <label>Into <select value={to} onChange={(e) => setTo((e.target as HTMLSelectElement).value)}>
+        {actions.LANGUAGES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+      </select></label>
+      <Row icon="speak" title="Translate document" detail="On this device, with Apple's translator" onClick={() => actions.translateDocument(to)} />
+    </>
+  );
+}
+
+const LAYOUTS: { id: Layout; title: string }[] = [
+  { id: 'continuous', title: 'Continuous' }, { id: 'single', title: 'Single page' }, { id: 'two', title: 'Two pages' }, { id: 'twoCover', title: 'Two pages, cover first' },
+];
+
 function MorePanel() {
   return (
     <>
+      <H>View</H>
+      <label>Layout <select value={layout.value} onChange={(e) => (layout.value = (e.target as HTMLSelectElement).value as Layout)}>
+        {LAYOUTS.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+      </select></label>
+      <label class="check"><input type="checkbox" checked={rightToLeft.value} onChange={(e) => (rightToLeft.value = (e.target as HTMLInputElement).checked)} /> Right-to-left two-page reading</label>
+      <label class="check"><input type="checkbox" checked={nightMode.value} onChange={(e) => (nightMode.value = (e.target as HTMLInputElement).checked)} /> Night reading mode</label>
+      <Row icon="read" title="Read mode (full screen)" onClick={actions.enterReadMode} />
+      <Row icon="speak" title="Read aloud" detail="From this page (choose again to stop)" onClick={actions.readAloud} />
+      <Row icon="bookmark" title="Add bookmark for this page…" onClick={actions.addBookmarkHere} />
+      {platform.translate && <Translate />}
+      <H>Document</H>
       <Row icon="info" title="Document properties…" onClick={() => (dialog.value = { kind: 'properties' })} />
       <Row icon="compare" title="Compare with another PDF…" onClick={() => (dialog.value = { kind: 'compare' })} />
       <Row icon="combine" title="Combine files…" onClick={() => actions.combineFiles()} />
       <Row icon="repair" title="Repair a damaged PDF…" onClick={actions.repairFile} />
+      <Row icon="batch" title="Batch process files…" detail="Compress, OCR, number, watermark, protect or convert many PDFs" onClick={() => (dialog.value = { kind: 'batch' })} />
       {platform.print && <Row icon="print" title="Print…" onClick={actions.printActive} />}
       {platform.share && <Row icon="share" title="Share…" onClick={actions.shareActive} />}
+      {platform.kind !== 'web' && <Row icon="refresh" title="Check for updates" detail={`You have MK PDF ${platform.version}`} onClick={() => void import('./Update').then((u) => u.checkForUpdates(true))} />}
     </>
   );
 }

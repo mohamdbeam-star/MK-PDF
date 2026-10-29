@@ -1,9 +1,10 @@
 import { useEffect } from 'preact/hooks';
 import {
-  active, activeId, busy, closeDocument, dialog, docs, openDocument, organizing, pageIndex, panel, saveActive, scale, showPanel,
+  active, activeId, busy, closeDocument, dialog, docs, openDocument, organizing, pageIndex, panel, readMode, saveActive, scale, showPanel,
   showSidebar, showToast, toast, tool, TOOL_INFO, Tool,
 } from '../app/store';
 import * as actions from '../app/actions';
+import { exitReadMode } from '../app/actions';
 import { platform } from '../app/platform';
 import { Viewer, viewerApi } from './Viewer';
 import { Sidebar } from './Sidebar';
@@ -103,6 +104,7 @@ export function App() {
         const i = docs.value.findIndex((x) => x.id === activeId.value);
         activeId.value = docs.value[(i + (e.shiftKey ? -1 : 1) + docs.value.length) % docs.value.length].id;
       } else if (mod && e.key.toLowerCase() === 'f' && d) { e.preventDefault(); (document.querySelector('.search .field') as HTMLInputElement | null)?.focus(); }
+      else if (e.key === 'Escape' && readMode.value) exitReadMode();
       else if (e.key === 'Escape' && !typing) tool.value = 'select';
     };
     window.addEventListener('keydown', key);
@@ -123,8 +125,9 @@ export function App() {
   }, []);
 
   return (
-    <div class="app">
+    <div class={`app ${readMode.value ? 'reading' : ''}`}>
       <div class="backdrop" />
+      {readMode.value && <button class="exit-reading glass-btn" onClick={exitReadMode}>Exit read mode</button>}
       <Tabs />
       <UpdateBanner />
       {!d && <Home />}

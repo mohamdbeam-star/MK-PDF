@@ -3,6 +3,7 @@
 #   Windows  MK-PDF-<v>-win-x64.exe       (installs for the current user, no admin rights)
 #            MK-PDF-<v>-portable.exe      (runs without installing)
 #   Android  MK-PDF-<v>-android.apk
+#   iPhone   MK-PDF-<v>-iphone.ipa         (unsigned: sign and install it with a sideloading tool)
 # Each app's update notification looks for its own file in the newest release.
 # Runs when a v* tag is pushed, or by hand (Actions → Release → Run workflow).
 name: Release
@@ -129,9 +130,41 @@ jobs:
           name: android
           path: cross/dist-android/*
 
+  iphone:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cross/package-lock.json
+      - name: Select newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)" && xcodebuild -version
+      - name: Build web app and copy it into the iOS project
+        working-directory: cross
+        run: npm ci --no-audit --no-fund && npm run build && npx cap sync ios
+      - name: Build unsigned iPhone app
+        working-directory: cross/ios/App
+        run: |
+          V=$(tr -d '[:space:]' < ../../../VERSION)
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -sdk iphoneos -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="$V" CURRENT_PROJECT_VERSION="${{ github.run_number }}" build
+          # An .ipa is the app inside a Payload folder, zipped.
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/App.app" "$RUNNER_TEMP/ipa/Payload/"
+          mkdir -p ../../dist-ios
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/cross/dist-ios/MK-PDF-$V-iphone.ipa" Payload)
+          ls -la ../../dist-ios
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone
+          path: cross/dist-ios/*.ipa
+
   publish:
-    needs: [mac, windows, android]
-    if: ${{ !cancelled() && (needs.mac.result == 'success' || needs.windows.result == 'success' || needs.android.result == 'success') }}
+    needs: [mac, windows, android, iphone]
+    if: ${{ !cancelled() && (needs.mac.result == 'success' || needs.windows.result == 'success' || needs.android.result == 'success' || needs.iphone.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

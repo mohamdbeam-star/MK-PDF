@@ -3,10 +3,10 @@
 // JavaScriptCore inside the Mac app, which supplies the page text and pictures natively.
 import { PDFDocument } from 'pdf-lib';
 import { PageLayout, PageText, layoutPage } from '../engine/layout';
-import { Assets, csv, docx, html, markdown, plainText, pptx, rtf, xlsx } from '../export/writers';
+import { Assets, csv, docx, html, markdown, odt, plainText, pptx, rtf, xlsx } from '../export/writers';
 import { loadPdf } from '../engine/load';
 
-export type DocFormat = 'docx' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
+export type DocFormat = 'docx' | 'doc' | 'odt' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
 
 export async function layoutsFor(bytes: Uint8Array, text: (page: number) => Promise<PageText> | PageText, pages?: number[]): Promise<{ doc: PDFDocument; pages: PageLayout[] }> {
   const doc = await loadPdf(bytes);
@@ -31,5 +31,7 @@ export async function convertLayouts(all: PageLayout[], format: DocFormat, title
     case 'txt': return enc(plainText(pages));
     case 'csv': return enc(csv(pages));
     case 'rtf': return enc(rtf(pages));
+    case 'doc': return enc(rtf(pages));
+    case 'odt': return odt(pages);
   }
 }

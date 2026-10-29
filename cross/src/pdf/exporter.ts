@@ -4,14 +4,16 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { layoutPage, PageLayout } from '../engine/layout';
 import { pageTextItems } from '../engine/textItems';
 import { PageContent, Rect } from '../engine/pageContent';
-import { Assets, csv, docx, html, markdown, plainText, pptx, rtf, xlsx } from '../export/writers';
+import { Assets, csv, docx, html, markdown, odt, plainText, pptx, rtf, xlsx } from '../export/writers';
 import { canvasBytes, renderPage } from './render';
 import { openPdfjs } from './doc';
 import { loadPdf } from '../engine/load';
 
-export type DocFormat = 'docx' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
+export type DocFormat = 'docx' | 'doc' | 'odt' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
 export const DOC_FORMATS: { id: DocFormat; title: string; detail: string }[] = [
   { id: 'docx', title: 'Word (.docx)', detail: 'Editable paragraphs, tables and images' },
+  { id: 'doc', title: 'Word 97 (.doc)', detail: 'For older versions of Word' },
+  { id: 'odt', title: 'OpenDocument (.odt)', detail: 'LibreOffice and other office apps' },
   { id: 'xlsx', title: 'Excel (.xlsx)', detail: 'Tables keep their columns; one sheet per page' },
   { id: 'pptx', title: 'PowerPoint (.pptx)', detail: 'Editable text over each page' },
   { id: 'html', title: 'Web page (.html)', detail: 'Exact layout, selectable text' },
@@ -24,6 +26,7 @@ export const MIME: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  doc: 'application/msword', odt: 'application/vnd.oasis.opendocument.text',
   html: 'text/html', md: 'text/markdown', txt: 'text/plain', csv: 'text/csv', rtf: 'application/rtf', pdf: 'application/pdf',
 };
 
@@ -86,6 +89,9 @@ export async function exportDocument(bytes: Uint8Array, js: PDFDocumentProxy, fo
     case 'txt': return enc(plainText(pages));
     case 'csv': return enc(csv(pages));
     case 'rtf': return enc(rtf(pages));
+    // Word opens rich text saved as .doc, as older Word versions expect from a .doc file.
+    case 'doc': return enc(rtf(pages));
+    case 'odt': return odt(pages);
   }
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DocModel } from '../pdf/doc';
 import { pageIndex, search, searchResults, selectedAnnot, sidebarMode } from '../app/store';
-import { edit, goTo } from '../app/actions';
+import { addBookmarkHere, deleteBookmarkAt, edit, goTo, renameBookmarkAt } from '../app/actions';
 import * as annots from '../pdf/annots';
 import * as ops from '../pdf/ops';
 import { renderPage } from '../pdf/render';
@@ -74,12 +74,21 @@ function Outline({ doc }: { doc: DocModel }) {
     goTo(index);
   };
   const tree = (list: OutlineItem[], depth = 0): preact.JSX.Element[] => list.flatMap((it, k) => [
-    <button key={`${depth}-${k}`} class="outline-item" style={{ paddingLeft: `${10 + depth * 14}px` }} onClick={() => go(it.dest)}>{it.title}</button>,
+    <div key={`${depth}-${k}`} class="outline-row">
+      <button class="outline-item" style={{ paddingLeft: `${10 + depth * 14}px` }} onClick={() => go(it.dest)}>{it.title}</button>
+      <button class="icon-btn small" title="Rename" onClick={() => renameBookmarkAt(order.indexOf(it), it.title)}><Icon name="rename" size={14} /></button>
+      <button class="icon-btn small" title="Delete" onClick={() => deleteBookmarkAt(order.indexOf(it))}><Icon name="trash" size={14} /></button>
+    </div>,
     ...tree(it.items ?? [], depth + 1),
   ]);
+  // Depth-first order, the order the bookmarks are stored in (to find each one to rename or delete).
+  const order: OutlineItem[] = [];
+  const flatten = (list: OutlineItem[]) => list.forEach((it) => { order.push(it); flatten(it.items ?? []); });
+  flatten(items ?? []);
   if (!items) return <p class="muted pad">Loading…</p>;
-  if (!items.length) return <p class="muted pad">This document has no bookmarks.</p>;
-  return <div class="outline">{tree(items)}</div>;
+  const add = <button class="glass-btn small add-bookmark" onClick={addBookmarkHere}><Icon name="plus" size={14} /> Add bookmark for this page</button>;
+  if (!items.length) return <div class="pad"><p class="muted">This document has no bookmarks.</p>{add}</div>;
+  return <div class="outline">{tree(items)}{add}</div>;
 }
 
 function Comments({ doc }: { doc: DocModel }) {

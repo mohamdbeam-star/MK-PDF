@@ -34,7 +34,7 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): T | null {
   return v;
 }
 
-const DRAG_TOOLS = new Set(['rect', 'oval', 'line', 'arrow', 'whiteout', 'redact', 'link', 'crop', 'textField', 'checkbox', 'dropdown']);
+const DRAG_TOOLS = new Set(['rect', 'oval', 'line', 'arrow', 'whiteout', 'retype', 'redact', 'link', 'crop', 'textField', 'checkbox', 'dropdown']);
 
 export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: number; viewport: PageViewport }) {
   const layer = useRef<HTMLDivElement>(null);
@@ -142,6 +142,7 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
         await edit(t === 'rect' ? 'Rectangle' : t === 'oval' ? 'Oval' : t === 'line' ? 'Line' : 'Arrow',
           (d) => annots.addShape(d, page, t === 'rect' ? 'Square' : t === 'oval' ? 'Circle' : t === 'line' ? 'Line' : 'Arrow', drag.a, drag.b, c, w));
       } else if (t === 'whiteout' && !tiny) await edit('Whiteout', (d) => annots.addWhiteout(d, page, r));
+      else if (t === 'retype' && !tiny) await (await import('../app/actions')).coverAndRetype(page, r);
       else if (t === 'redact' && !tiny) await edit('Mark for Redaction', (d) => annots.addRedactionMark(d, page, r));
       else if (t === 'link' && !tiny) await addLinkAt(page, r);
       else if (t === 'crop' && !tiny) {
@@ -296,7 +297,7 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
           })()}
           {drag && t !== 'line' && t !== 'arrow' && (() => {
             const b = box(rectOf(drag.a, drag.b));
-            const cls = t === 'redact' ? 'redact' : t === 'whiteout' ? 'whiteout' : ['rect', 'oval'].includes(t) ? 'shape' : 'dashed';
+            const cls = t === 'redact' ? 'redact' : t === 'whiteout' || t === 'retype' ? 'whiteout' : ['rect', 'oval'].includes(t) ? 'shape' : 'dashed';
             return t === 'oval'
               ? <ellipse cx={b.left + b.width / 2} cy={b.top + b.height / 2} rx={b.width / 2} ry={b.height / 2} class={cls} stroke={css(color.value)} stroke-width={lineWidth.value * s} />
               : <rect x={b.left} y={b.top} width={b.width} height={b.height} class={cls} stroke={cls === 'shape' ? css(color.value) : undefined} stroke-width={cls === 'shape' ? lineWidth.value * s : undefined} />;

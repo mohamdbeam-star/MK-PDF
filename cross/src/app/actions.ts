@@ -2,7 +2,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { platform } from './platform';
 import {
-  active, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, selectedAnnot, showToast, task,
+  active, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showToast, task,
 } from './store';
 import * as ops from '../pdf/ops';
 import * as annots from '../pdf/annots';
@@ -13,6 +13,7 @@ import { DOC_FORMATS, DocFormat, MIME, exportDocument, exportImages } from '../p
 import { addTextLayer, recognize } from '../pdf/ocr';
 import { renderPage, canvasBytes } from '../pdf/render';
 import { loadPdf } from '../engine/load';
+import * as extras from '../pdf/extras';
 
 const base = (name: string) => name.replace(/\.pdf$/i, '');
 const pdfAccept = 'application/pdf,.pdf';
@@ -259,3 +260,237 @@ export async function shareActive() {
 export function closeOrganize() { organizing.value = false; }
 export function goTo(i: number) { pageIndex.value = i; window.dispatchEvent(new CustomEvent('mkpdf-goto', { detail: i })); }
 export { docs };
+
+// MARK: features matching the Mac app
+
+const savePdf = async (name: string, bytes: Uint8Array) => {
+  const r = await platform.saveFile(name, bytes, 'application/pdf');
+  if (r) showToast(`Saved to ${r.label}`);
+};
+
+/** A copy of the document as flattened (print-ready), grayscale or PDF/X-3 output. */
+export async function savePdfVariant(kind: 'flattened' | 'grayscale' | 'pdfx') {
+  const d = active.value;
+  if (!d) return;
+  const label = { flattened: 'flattened', grayscale: 'grayscale', pdfx: 'PDF-X' }[kind];
+  const bytes = await task(`Creating ${label} PDF…`, async () => {
+    const doc = await loadPdf(await d.saveBytes());
+    if (kind === 'flattened') { ops.flattenForms(doc); extras.flattenAnnotations(doc, 'all'); }
+    if (kind === 'grayscale') await extras.grayscale(doc);
+    if (kind === 'pdfx') extras.pdfx3(doc);
+    return doc.save();
+  });
+  if (bytes) await savePdf(`${base(d.name)} (${label}).pdf`, bytes);
+}
+
+export async function exportCommentSummary() {
+  const d = active.value;
+  if (!d) return;
+  const html = extras.commentSummary(await d.library(), d.name);
+  const r = await platform.saveFile(`${base(d.name)} comments.html`, new TextEncoder().encode(html), 'text/html');
+  if (r) showToast(`Saved to ${r.label}`);
+}
+
+export const flattenComments = () => edit('Flatten Comments', (doc) => extras.flattenAnnotations(doc, 'comments'));
+
+export async function replaceCurrentPage() {
+  const d = active.value;
+  if (!d) return;
+  const [f] = await platform.openFiles(pdfAccept, false);
+  if (!f) return;
+  const src = await loadPdf(f.bytes);
+  let from = 0;
+  if (src.getPageCount() > 1) {
+    const r = await prompt('Replace page', '1', `Page of “${f.name}” to use (1–${src.getPageCount()})`);
+    if (!r) return;
+    from = Math.max(0, Math.min(src.getPageCount() - 1, (Number(r) || 1) - 1));
+  }
+  const i = pageIndex.value;
+  await edit('Replace Page', (doc) => extras.replacePage(doc, i, f.bytes, from));
+}
+
+export async function splitByBookmarks() {
+  const d = active.value;
+  if (!d) return;
+  await task('Splitting…', async () => {
+    const doc = await d.library();
+    const groups = extras.bookmarkGroups(doc);
+    if (!groups.length) { showToast('This document has no bookmarks to split at.'); return; }
+    const safe = (t: string) => t.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'part';
+    const files = [];
+    for (const [i, g] of groups.entries()) files.push({ name: `${base(d.name)} ${i + 1} ${safe(g.title)}.pdf`, bytes: await ops.extract(doc, g.pages) });
+    const where = await platform.saveMany(files, 'application/pdf');
+    if (where) showToast(`Saved ${files.length} files to ${where}`);
+  });
+}
+
+export async function addBookmarkHere() {
+  const i = pageIndex.value;
+  const title = await prompt('Add bookmark', `Page ${i + 1}`, 'Title');
+  if (title) await edit('Add Bookmark', (doc) => extras.addBookmark(doc, title, i));
+}
+
+export async function renameBookmarkAt(index: number, current: string) {
+  const title = await prompt('Rename bookmark', current, 'Title');
+  if (title) await edit('Rename Bookmark', (doc) => { const b = extras.listBookmarks(doc)[index]; if (b) extras.renameBookmark(doc, b.ref, title); });
+}
+
+export const deleteBookmarkAt = (index: number) =>
+  edit('Delete Bookmark', (doc) => { const b = extras.listBookmarks(doc)[index]; if (b) extras.deleteBookmark(doc, b.ref); });
+
+export async function renameFieldNamed(name: string) {
+  const to = await prompt('Rename field', name, 'Field name');
+  if (to && to !== name) await edit('Rename Field', (doc) => extras.renameField(doc, name, to));
+}
+
+export const deleteFieldNamed = (name: string) => edit('Delete Field', (doc) => extras.deleteField(doc, name));
+
+/** Size of the document now and after compressing at `preset` (nothing is changed). */
+export async function estimateCompression(preset: Preset) {
+  const d = active.value;
+  if (!d) return null;
+  const src = await d.currentBytes();
+  const out = await task('Estimating size…', (p) => compressBytes(src, preset, p));
+  return out ? { before: src.length, after: Math.min(out.length, src.length) } : null;
+}
+
+/** "Cover and retype": the text under a box is covered in white and retyped as new text in the same place. */
+export async function coverAndRetype(page: number, r: { x: number; y: number; w: number; h: number }) {
+  const d = active.value;
+  if (!d?.js) return;
+  const { pageTextItems } = await import('../engine/textItems');
+  const items = (await pageTextItems(d.js, page + 1)).filter((it) => it.x < r.x + r.w && it.x + it.w > r.x && it.y >= r.y - it.h * 0.3 && it.y <= r.y + r.h);
+  const lines = new Map<number, typeof items>();
+  for (const it of items) { const k = Math.round(it.y); lines.set(k, [...(lines.get(k) ?? []), it]); }
+  const current = [...lines.entries()].sort((a, b) => b[0] - a[0]).map(([, l]) => l.sort((a, b) => a.x - b.x).map((i) => i.str).join('')).join('\n');
+  const text = await prompt('Cover and retype', current, 'New text', 'The text under the box is covered and this text is written in its place.');
+  if (text === null) return;
+  const size = Math.max(6, Math.min(48, (items[0]?.h ?? r.h * 0.7) * 0.95));
+  await edit('Cover and Retype', async (doc) => {
+    annots.addWhiteout(doc, page, r);
+    if (text.trim()) await annots.addFreeText(doc, page, r.x - 3, r.y + r.h / 2, text, size, [0, 0, 0]);
+  });
+}
+
+/** Saves an image on the page as a PNG (as it appears, at 3× resolution). */
+export async function saveObjectAsPng(page: number, bounds: { x: number; y: number; w: number; h: number }) {
+  const d = active.value;
+  if (!d?.js) return;
+  const bytes = await task('Saving image…', async () => {
+    const canvas = await renderPage(d.js!, page, 3, { annotations: false });
+    const vp = (await d.js!.getPage(page + 1)).getViewport({ scale: 3 });
+    const [a, b] = [vp.convertToViewportPoint(bounds.x, bounds.y + bounds.h), vp.convertToViewportPoint(bounds.x + bounds.w, bounds.y)];
+    const cut = document.createElement('canvas');
+    cut.width = Math.max(1, Math.round(Math.abs(b[0] - a[0]))); cut.height = Math.max(1, Math.round(Math.abs(b[1] - a[1])));
+    cut.getContext('2d')!.drawImage(canvas, Math.min(a[0], b[0]), Math.min(a[1], b[1]), cut.width, cut.height, 0, 0, cut.width, cut.height);
+    return canvasBytes(cut, 'image/png');
+  });
+  if (bytes) { const r = await platform.saveFile(`${base(d.name)} image.png`, bytes, 'image/png'); if (r) showToast(`Saved to ${r.label}`); }
+}
+
+// MARK: read aloud
+
+let speaking = false;
+/** Reads the document aloud from the current page (again to stop). */
+export async function readAloud() {
+  const d = active.value;
+  if (!d?.js) return;
+  if (speaking) { platform.stopSpeaking(); speaking = false; showToast('Stopped reading.'); return; }
+  const { pageTextItems } = await import('../engine/textItems');
+  let text = '';
+  for (let i = pageIndex.value; i < d.js.numPages && text.length < 60_000; i++) text += (await pageTextItems(d.js, i + 1)).map((it) => it.str).join(' ') + '\n';
+  if (!text.trim()) return showToast('No text to read on these pages.');
+  speaking = true;
+  showToast('Reading aloud. Choose Read Aloud again to stop.');
+  await platform.speak(text, () => { speaking = false; });
+}
+
+// MARK: batch
+
+export type BatchOp = 'compress' | 'ocr' | 'pageNumbers' | 'watermark' | 'password' | 'rotate' | 'flatten' | 'metadata' | 'jpg' | 'docx' | 'txt';
+export const BATCH_OPS: { id: BatchOp; title: string; input?: string }[] = [
+  { id: 'compress', title: 'Compress' }, { id: 'ocr', title: 'Recognize text (OCR)' }, { id: 'pageNumbers', title: 'Add page numbers' },
+  { id: 'watermark', title: 'Add a text watermark', input: 'Watermark text' }, { id: 'password', title: 'Add a password', input: 'Password' },
+  { id: 'rotate', title: 'Rotate all pages right' }, { id: 'flatten', title: 'Flatten forms and comments' }, { id: 'metadata', title: 'Remove metadata' },
+  { id: 'jpg', title: 'Convert to JPG images' }, { id: 'docx', title: 'Convert to Word' }, { id: 'txt', title: 'Convert to text' },
+];
+
+/** Runs one operation on many PDFs and saves the results together. */
+export async function runBatch(files: { name: string; bytes: Uint8Array }[], which: BatchOp, value: string) {
+  const out = await task('Processing files…', async (progress) => {
+    const results: { name: string; bytes: Uint8Array }[] = [];
+    const { openPdfjs } = await import('../pdf/doc');
+    for (const [k, f] of files.entries()) {
+      const stem = base(f.name);
+      try {
+        if (which === 'compress') results.push({ name: `${stem} (compressed).pdf`, bytes: await compressBytes(f.bytes, 'balanced', () => {}) });
+        else if (which === 'jpg' || which === 'docx' || which === 'txt' || which === 'ocr') {
+          const js = await openPdfjs(f.bytes);
+          if (which === 'jpg') (await exportImages(js, 'jpeg', 150, 0.9)).forEach((b, i) => results.push({ name: `${stem}-${i + 1}.jpg`, bytes: b }));
+          else if (which === 'ocr') {
+            const pages = [...Array(js.numPages).keys()];
+            const recognised = await recognize(js, pages, 'eng+ara', () => {});
+            const doc = await loadPdf(f.bytes);
+            await addTextLayer(doc, recognised);
+            results.push({ name: `${stem} (OCR).pdf`, bytes: await doc.save() });
+          } else results.push({ name: `${stem}.${which}`, bytes: await exportDocument(f.bytes, js, which, stem) });
+          void js.loadingTask.destroy();
+        } else {
+          const doc = await loadPdf(f.bytes);
+          if (which === 'pageNumbers') await ops.headerFooter(doc, ['', '', '', '', 'Page {page} of {pages}', ''], { size: 10, margin: 28, file: stem });
+          if (which === 'watermark') await ops.watermark(doc, doc.getPageIndices(), { text: value || 'CONFIDENTIAL', size: 60, opacity: 0.2, angle: 45, color: [0.6, 0.6, 0.6] });
+          if (which === 'rotate') ops.rotatePages(doc, doc.getPageIndices(), 90);
+          if (which === 'flatten') { ops.flattenForms(doc); extras.flattenAnnotations(doc, 'all'); }
+          if (which === 'metadata') ops.removeMetadata(doc);
+          let bytes = await doc.save();
+          if (which === 'password') bytes = await (await import('../pdf/security')).encrypt(bytes, { user: value, owner: value, print: true, copy: true, modify: true, annotate: true });
+          results.push({ name: `${stem} (${BATCH_OPS.find((o) => o.id === which)!.title.toLowerCase()}).pdf`, bytes });
+        }
+      } catch (e) {
+        showToast(`${f.name}: ${(e as Error).message}`);
+      }
+      progress((k + 1) / files.length);
+    }
+    return results;
+  });
+  if (!out?.length) return;
+  const where = await platform.saveMany(out, 'application/octet-stream');
+  if (where) { showToast(`Saved ${out.length} files to ${where}`); platform.notify('Batch finished', `${out.length} files`); }
+}
+
+/** Read mode: only the pages, full screen; Escape or the button leaves it. */
+export function enterReadMode() {
+  readMode.value = true;
+  void document.documentElement.requestFullscreen?.().catch(() => {});
+}
+export function exitReadMode() {
+  readMode.value = false;
+  if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+}
+
+// MARK: translate (iPhone)
+
+export const LANGUAGES: [string, string][] = [['ar', 'Arabic'], ['en', 'English'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish'], ['it', 'Italian'],
+  ['pt', 'Portuguese'], ['ru', 'Russian'], ['zh-Hans', 'Chinese'], ['ja', 'Japanese'], ['ko', 'Korean'], ['tr', 'Turkish'], ['hi', 'Hindi'], ['nl', 'Dutch'],
+  ['pl', 'Polish'], ['uk', 'Ukrainian']];
+
+/** Translates the document on the device, paragraph by paragraph, and shows the result. */
+export async function translateDocument(target: string) {
+  const d = active.value;
+  if (!d?.js || !platform.translate) return;
+  const result = await task('Translating…', async () => {
+    const { pageTextItems } = await import('../engine/textItems');
+    const pages: string[] = [];
+    for (let i = 0; i < d.js!.numPages; i++) {
+      const items = await pageTextItems(d.js!, i + 1);
+      const lines = new Map<number, typeof items>();
+      for (const it of items) { const k = Math.round(it.y / 2); lines.set(k, [...(lines.get(k) ?? []), it]); }
+      pages.push([...lines.entries()].sort((a, b) => b[0] - a[0]).map(([, l]) => l.sort((a, b) => a.x - b.x).map((x) => x.str).join(' ')).join('\n'));
+    }
+    const paragraphs = pages.flatMap((p, i) => [...(i ? ['\f'] : []), ...p.split('\n')]);
+    const out = await platform.translate!(paragraphs.map((p) => (p === '\f' ? '' : p)), target);
+    return out.map((t, i) => (paragraphs[i] === '\f' ? '\n— — —\n' : t)).join('\n');
+  });
+  if (result) (await import('./store')).dialog.value = { kind: 'translation', props: { text: result, name: base(d.name) } };
+}
+

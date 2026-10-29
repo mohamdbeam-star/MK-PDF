@@ -230,6 +230,46 @@ function SplitDialog() {
   );
 }
 
+/** One operation on many PDFs, saved together (like the Mac app's batch tool). */
+function BatchDialog() {
+  const [files, setFiles] = useState<{ name: string; bytes: Uint8Array }[]>([]);
+  const [op, setOp] = useState<actions.BatchOp>('compress');
+  const [value, setValue] = useState('');
+  const info = actions.BATCH_OPS.find((o) => o.id === op)!;
+  return (
+    <Sheet title="Batch Process Files">
+      <button class="glass-btn" onClick={async () => { const more = await platform.openFiles('application/pdf,.pdf', true); setFiles([...files, ...more]); }}>Add PDFs…</button>
+      {files.length > 0 && <ul class="batch-files">{files.map((f, i) => <li key={`${f.name}-${i}`}>{f.name}
+        <button class="icon-btn" title="Remove" onClick={() => setFiles(files.filter((_, k) => k !== i))}>✕</button></li>)}</ul>}
+      <label>Operation <select value={op} onChange={(e) => { setOp((e.target as HTMLSelectElement).value as actions.BatchOp); setValue(''); }}>
+        {actions.BATCH_OPS.map((o) => <option key={o.id} value={o.id}>{o.title}</option>)}
+      </select></label>
+      {info.input && (op === 'password'
+        ? <input class="field" type="password" value={value} placeholder={info.input} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
+        : <input class="field" value={value} placeholder={info.input} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />)}
+      <Buttons ok={`Process ${files.length || ''} file${files.length === 1 ? '' : 's'}`} onOk={() => {
+        if (!files.length) return showToast('Add PDFs to process first.');
+        if (info.input && !value) return showToast(`Enter the ${info.input.toLowerCase()}.`);
+        close();
+        void actions.runBatch(files, op, value);
+      }} />
+    </Sheet>
+  );
+}
+
+function TranslationDialog({ text, name }: { text: string; name: string }) {
+  return (
+    <Sheet title="Translation" wide>
+      <textarea class="field translation" readOnly value={text} />
+      <div class="buttons">
+        <button class="glass-btn" onClick={() => { void navigator.clipboard?.writeText(text); showToast('Copied'); }}>Copy</button>
+        <button class="glass-btn" onClick={async () => { const r = await platform.saveFile(`${name} (translated).txt`, new TextEncoder().encode(text), 'text/plain'); if (r) showToast(`Saved to ${r.label}`); }}>Save as text</button>
+        <button class="glass-btn prominent" onClick={close}>Done</button>
+      </div>
+    </Sheet>
+  );
+}
+
 function PropertiesDialog() {
   const d = active.value;
   const [m, setM] = useState({ title: '', author: '', subject: '', keywords: '' });
@@ -268,6 +308,8 @@ export function Dialogs() {
     case 'headerFooter': return <HeaderFooterDialog />;
     case 'bates': return <HeaderFooterDialog bates />;
     case 'split': return <SplitDialog />;
+    case 'batch': return <BatchDialog />;
+    case 'translation': return <TranslationDialog {...(p as { text: string; name: string })} />;
     case 'properties': return <PropertiesDialog />;
     case 'compare': return <Compare onClose={close} />;
     default: return null;

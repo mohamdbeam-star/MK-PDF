@@ -265,3 +265,63 @@ export function rtf(layouts: PageLayout[]): string {
   });
   return `{\\rtf1\\ansi\\uc1\\deff0{\\fonttbl${fonts.map((f, i) => `{\\f${i} ${esc(f)};}`).join('')}}{\\colortbl;${colors.map((c) => { const [r, g, b] = c.split(','); return `\\red${r}\\green${g}\\blue${b};`; }).join('')}}\n${body}}`;
 }
+
+/** OpenDocument text (.odt): paragraphs with their fonts, sizes, colours and alignment, tables, one page per page. */
+export function odt(layouts: PageLayout[]): Uint8Array {
+  const textStyles = new Map<string, string>(), paraStyles = new Map<string, string>();
+  const textStyle = (r: LayoutRun) => {
+    const key = [r.font.family, r.size.toFixed(1), hex(r.color), r.font.bold ? 'b' : '', r.font.italic ? 'i' : ''].join('|');
+    if (!textStyles.has(key)) textStyles.set(key, `T${textStyles.size + 1}`);
+    return textStyles.get(key)!;
+  };
+  const paraStyle = (align: string, rtl: boolean, breakBefore: boolean) => {
+    const key = `${align}|${rtl ? 'rtl' : ''}|${breakBefore ? 'break' : ''}`;
+    if (!paraStyles.has(key)) paraStyles.set(key, `P${paraStyles.size + 1}`);
+    return paraStyles.get(key)!;
+  };
+  const span = (r: LayoutRun) => `<text:span text:style-name="${textStyle(r)}">${xml(r.text).replace(/\t/g, '<text:tab/>')}</text:span>`;
+  let body = '', tables = 0;
+  layouts.forEach((l, pi) => {
+    let first = pi > 0;
+    for (const it of l.items) {
+      if (it.kind === 'paragraph') {
+        const align = it.alignment === 'center' ? 'center' : it.alignment === 'right' ? 'end' : it.alignment === 'justify' ? 'justify' : 'start';
+        body += `<text:p text:style-name="${paraStyle(align, it.rtl, first)}">${paragraphRuns(it).map(span).join('')}</text:p>`;
+        first = false;
+      } else if (it.kind === 'table') {
+        if (first) { body += `<text:p text:style-name="${paraStyle('start', false, true)}"/>`; first = false; }
+        const cols = Math.max(1, ...it.rows.map((r) => r.length));
+        body += `<table:table table:name="Table${++tables}"><table:table-column table:number-columns-repeated="${cols}"/>`;
+        for (const row of it.rows) {
+          body += '<table:table-row>';
+          for (let c = 0; c < cols; c++) {
+            const cell = row[c];
+            body += `<table:table-cell office:value-type="string"><text:p>${cell ? cell.runs.map(span).join('') : ''}</text:p></table:table-cell>`;
+          }
+          body += '</table:table-row>';
+        }
+        body += '</table:table>';
+      }
+    }
+    if (first) body += `<text:p text:style-name="${paraStyle('start', false, true)}"/>`;
+  });
+  const fonts = new Set([...textStyles.keys()].map((k) => k.split('|')[0]));
+  const auto = [...textStyles.entries()].map(([k, name]) => {
+    const [family, size, color, b, i] = k.split('|');
+    return `<style:style style:name="${name}" style:family="text"><style:text-properties style:font-name="${xml(family)}" fo:font-size="${size}pt" fo:color="#${color}"${b ? ' fo:font-weight="bold"' : ''}${i ? ' fo:font-style="italic"' : ''}/></style:style>`;
+  }).join('') + [...paraStyles.entries()].map(([k, name]) => {
+    const [align, rtl, brk] = k.split('|');
+    return `<style:style style:name="${name}" style:family="paragraph"><style:paragraph-properties fo:text-align="${align}"${rtl ? ' style:writing-mode="rl-tb"' : ''}${brk ? ' fo:break-before="page"' : ''} fo:margin-bottom="0.08cm"/></style:style>`;
+  }).join('');
+  const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"';
+  const content = `${XML_HEAD}<office:document-content ${NS} office:version="1.2"><office:font-face-decls>${[...fonts].map((f) => `<style:font-face style:name="${xml(f)}" svg:font-family="${xml(f)}"/>`).join('')}</office:font-face-decls>` +
+    `<office:automatic-styles>${auto}</office:automatic-styles><office:body><office:text>${body}</office:text></office:body></office:document-content>`;
+  const manifest = `${XML_HEAD}<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`;
+  // The mimetype entry comes first and uncompressed, as OpenDocument requires.
+  return zipSync({
+    mimetype: [strToU8('application/vnd.oasis.opendocument.text'), { level: 0 }],
+    'content.xml': strToU8(content),
+    'META-INF/manifest.xml': strToU8(manifest),
+  });
+}
+

@@ -4,7 +4,7 @@ import {
   MessageSquare, Signature, LayoutGrid, ClipboardList, Lock, ScanText, Shrink, Share, Ellipsis, FolderOpen, FilePlus, Files, Images, GitCompare,
   Undo2, Redo2, Save, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, PanelLeft, PanelRight, Search, Bookmark, Trash2, RotateCw, RotateCcw, Copy,
   Scissors, ArrowUpDown, Plus, Download, Printer, Info, Camera, Moon, Sun, Image, ImageMinus, ImagePlus, FileOutput, Droplet, Hash, Heading,
-  RefreshCw, Bandage, Layers, Menu, Upload,
+  RefreshCw, Bandage, Layers, Menu, Upload, Volume2, BookOpen, Replace, Pencil, Contrast, Boxes, Columns2, FileType,
 } from 'lucide-preact';
 
 const MAP = {
@@ -17,7 +17,8 @@ const MAP = {
   sidebar: PanelLeft, panel: PanelRight, search: Search, bookmark: Bookmark, trash: Trash2, rotcw: RotateCw, rotccw: RotateCcw, copy: Copy,
   scissors: Scissors, reverse: ArrowUpDown, plus: Plus, download: Download, print: Printer, info: Info, camera: Camera, moon: Moon, sun: Sun,
   image: Image, imageminus: ImageMinus, imageplus: ImagePlus, output: FileOutput, droplet: Droplet, hash: Hash, heading: Heading, refresh: RefreshCw,
-  repair: Bandage, layers: Layers, menu: Menu, share: Upload,
+  repair: Bandage, layers: Layers, menu: Menu, share: Upload, speak: Volume2, read: BookOpen, replace: Replace, rename: Pencil,
+  gray: Contrast, batch: Boxes, columns: Columns2, filetype: FileType,
 } as const;
 
 export type IconName = keyof typeof MAP;
