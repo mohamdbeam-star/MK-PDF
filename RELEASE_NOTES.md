@@ -1,12 +1,7 @@
-## What's new in MK PDF 1.3.10
+## What's new in MK PDF 1.3.11
 
-**iPhone and iPad**
-- Opening a PDF works the first time: documents are chosen with the system's document picker.
-- Saved and exported files are in the Files app under **On My iPhone › MK PDF** (the folder didn't appear before).
-- The message after saving or exporting sits above the home bar, wraps long file names, and has a **Show** button that opens the Files app.
-- PDFs sent to MK PDF from Mail and other apps no longer leave a copy in the MK PDF folder.
+**Update notices on iPhone and Android**
+- New versions are found even when GitHub turns the check away (it allows only a few checks an hour per internet address, and phones on mobile data share addresses): the app then reads the public release page instead.
+- iPhone shows "MK PDF x.y.z is available" as a system notification, as Android does (it asks once for permission), as well as the banner in the app.
 
-**Android and iPhone**
-- Choosing photos to add or convert no longer loses the selection.
-
-Includes everything in 1.3.9.
+Includes everything in 1.3.10.

@@ -194,7 +194,7 @@ async function capacitor(kind: 'android' | 'ios'): Promise<Platform> {
     // Android: downloads the APK and opens the system installer, which updates this app in place. iPhone apps
     // can't install themselves; the release page has the new build to sign and install.
     async installUpdate(url) { if (kind === 'android') await Updater.install({ url }); else window.open(url, '_system'); },
-    notify: (title, body) => { if (kind === 'android') void Updater.notify({ title, body }).catch(() => {}); },
+    notify: (title, body) => { void Updater.notify({ title, body }).catch(() => {}); },
     ...(canTranslate ? { translate: async (paragraphs: string[], target: string) => (await Translate.translate({ paragraphs, target })).paragraphs } : {}),
     ...(kind === 'android' ? {
       async speak(text: string, done: () => void) { try { await Speech.speak({ text }); } finally { done(); } },

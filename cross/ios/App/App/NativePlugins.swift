@@ -2,6 +2,7 @@ import UIKit
 import SwiftUI
 import Capacitor
 import UniformTypeIdentifiers
+import UserNotifications
 #if canImport(Translation)
 import Translation
 #endif
@@ -11,6 +12,7 @@ class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(OpenFilePlugin())
         bridge?.registerPluginInstance(TranslatePlugin())
+        bridge?.registerPluginInstance(UpdaterPlugin())
     }
 }
 
@@ -88,6 +90,34 @@ public class OpenFilePlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelega
         DispatchQueue.main.async {
             if let instance { instance.notifyListeners("open", data: file, retainUntilConsumed: true) } else { waiting.append(file) }
         }
+    }
+}
+
+/// "MK PDF x.y.z is available" as a system notification, as on Android (asks for permission the first time),
+/// shown even while the app is open. The update itself is the release's .ipa, installed like the first time.
+@objc(UpdaterPlugin)
+public class UpdaterPlugin: CAPPlugin, CAPBridgedPlugin, UNUserNotificationCenterDelegate {
+    public let identifier = "UpdaterPlugin"
+    public let jsName = "Updater"
+    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "notify", returnType: CAPPluginReturnPromise)]
+
+    override public func load() { UNUserNotificationCenter.current().delegate = self }
+
+    @objc func notify(_ call: CAPPluginCall) {
+        let content = UNMutableNotificationContent()
+        content.title = call.getString("title") ?? "MK PDF"
+        content.body = call.getString("body") ?? ""
+        content.sound = .default
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard granted else { call.resolve(); return }
+            center.add(UNNotificationRequest(identifier: "mkpdf.update", content: content, trigger: nil)) { _ in call.resolve() }
+        }
+    }
+
+    public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                       withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
     }
 }
 

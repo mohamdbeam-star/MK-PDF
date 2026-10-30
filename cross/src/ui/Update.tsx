@@ -12,29 +12,50 @@ export function isNewer(a: string, b: string) {
   return false;
 }
 
+async function fromApi(): Promise<Release | undefined> {
+  const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { Accept: 'application/vnd.github+json' } });
+  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+  const list = (await r.json()) as { tag_name: string; html_url: string; body: string; draft: boolean; prerelease: boolean; assets: { name: string; browser_download_url: string }[] }[];
+  const want = platform.kind === 'windows' ? (n: string) => /win-x64\.exe$/i.test(n)
+    : platform.kind === 'ios' ? (n: string) => /\.ipa$/i.test(n) : (n: string) => /\.apk$/i.test(n);
+  return list.filter((x) => !x.draft && !x.prerelease)
+    .map((x) => ({ x, asset: x.assets.find((a) => want(a.name)) }))
+    .filter((c) => c.asset)
+    .map((c) => ({ version: c.x.tag_name.replace(/^v/, ''), page: c.x.html_url, asset: c.asset!.browser_download_url, name: c.asset!.name, notes: c.x.body }))
+    .sort((a, b) => (isNewer(a.version, b.version) ? -1 : 1))[0];
+}
+
+/** The API answers 60 checks an hour per internet address, and phones on mobile data share addresses, so it often
+ *  refuses them. Phones then read the public "latest release" page instead, natively (the web view's cross-site
+ *  rule would block it), and name the installer the way every release does. */
+async function fromPage(): Promise<Release | undefined> {
+  if (!platform.mobile) return undefined;
+  const { CapacitorHttp } = await import('@capacitor/core');
+  const r = await CapacitorHttp.get({ url: `https://github.com/${REPO}/releases/latest`, responseType: 'text' });
+  const tag = (/\/releases\/tag\/(v?\d+(?:\.\d+)+)/.exec(r.url) ?? /\/releases\/tag\/(v?\d+(?:\.\d+)+)/.exec(String(r.data)))?.[1];
+  if (!tag) return undefined;
+  const version = tag.replace(/^v/, '');
+  const name = `MK-PDF-${version}-${platform.kind === 'ios' ? 'iphone.ipa' : 'android.apk'}`;
+  return { version, page: `https://github.com/${REPO}/releases/tag/${tag}`, asset: `https://github.com/${REPO}/releases/download/${tag}/${name}`, name, notes: '' };
+}
+
 /** Looks for the newest release carrying this platform's installer. */
 let lastCheck = 0;
 export async function checkForUpdates(userInitiated = false) {
   if (platform.kind === 'web') return;
   lastCheck = Date.now();
+  let best: Release | undefined;
   try {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { Accept: 'application/vnd.github+json' } });
-    const list = (await r.json()) as { tag_name: string; html_url: string; body: string; draft: boolean; prerelease: boolean; assets: { name: string; browser_download_url: string }[] }[];
-    const want = platform.kind === 'windows' ? (n: string) => /win-x64\.exe$/i.test(n)
-      : platform.kind === 'ios' ? (n: string) => /\.ipa$/i.test(n) : (n: string) => /\.apk$/i.test(n);
-    const best = list.filter((x) => !x.draft && !x.prerelease)
-      .map((x) => ({ x, asset: x.assets.find((a) => want(a.name)) }))
-      .filter((c) => c.asset)
-      .map((c) => ({ version: c.x.tag_name.replace(/^v/, ''), page: c.x.html_url, asset: c.asset!.browser_download_url, name: c.asset!.name, notes: c.x.body }))
-      .sort((a, b) => (isNewer(a.version, b.version) ? -1 : 1))[0];
-    if (best && isNewer(best.version, platform.version) && localStorage.getItem('mkpdf.skip') !== best.version) {
-      const fresh = update.value?.version !== best.version;
-      update.value = best;
-      if (fresh) platform.notify(`MK PDF ${best.version} is available`, `You have ${platform.version}. Open MK PDF to update.`);
-    } else if (userInitiated) showToast(`MK PDF ${platform.version} is up to date.`);
+    best = await fromApi();
   } catch {
-    if (userInitiated) showToast("Couldn't check for updates.");
+    best = await fromPage().catch(() => undefined);
+    if (!best) { if (userInitiated) showToast("Couldn't check for updates."); return; }
   }
+  if (best && isNewer(best.version, platform.version) && localStorage.getItem('mkpdf.skip') !== best.version) {
+    const fresh = update.value?.version !== best.version;
+    update.value = best;
+    if (fresh) platform.notify(`MK PDF ${best.version} is available`, `You have ${platform.version}. Open MK PDF to update.`);
+  } else if (userInitiated) showToast(`MK PDF ${platform.version} is up to date.`);
 }
 
 /** Checks shortly after launch, every hour, and whenever the app comes back to the front (at most every 15 minutes). */
