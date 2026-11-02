@@ -1,7 +1,7 @@
 // Editing existing page content: text, images, redaction. Uses the content engine on pdf-lib objects.
 import { PDFDocument, PDFName, PDFDict, PDFRawStream, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import { LayoutParagraph, lineSize } from '../engine/layout';
-import { GraphicObject, PageContent, Rect, contains, containsRect, intersects, maxX, maxY, rect } from '../engine/pageContent';
+import { GraphicObject, PageContent, Rect, contains, containsRect, intersects, isSpace, maxX, maxY, rect } from '../engine/pageContent';
 import { num, op } from '../engine/contentStream';
 import { fontFor, wrap } from './fonts';
 import { listAnnots, isRedaction, deleteAnnot } from './annots';
@@ -18,7 +18,19 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
   if (block) {
     const pc = new PageContent(doc, page);
     const rects = block.lines.map((l) => ({ x: l.rect.x - 0.5, y: l.rect.y - 0.5, w: l.rect.w + 1, h: l.rect.h + 1 }));
-    pc.removeGlyphs((g) => g.upright && rects.some((r) => contains(r, { x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 })));
+    // The blank spaces padding each line (a table cell's fill, however long) go too: left behind, they'd sit among
+    // the new letters and split its words when the text is read or copied.
+    const blanks = pc.glyphs.filter((g) => g.upright && isSpace(g));
+    const padded = rects.map((line) => {
+      const row = blanks.filter((g) => Math.abs(g.rect.y + g.rect.h / 2 - (line.y + line.h / 2)) < line.h / 2);
+      // One sweep each way: a space within reach of the run so far extends it.
+      let lo = line.x, hi = maxX(line);
+      for (const g of [...row].sort((a, b) => a.rect.x - b.rect.x)) if (maxX(g.rect) > hi && g.rect.x <= hi + g.size * 1.5) hi = maxX(g.rect);
+      for (const g of [...row].sort((a, b) => maxX(b.rect) - maxX(a.rect))) if (g.rect.x < lo && maxX(g.rect) >= lo - g.size * 1.5) lo = g.rect.x;
+      return { x: lo, y: line.y, w: hi - lo, h: line.h };
+    });
+    const centre = (g: { rect: Rect }) => ({ x: g.rect.x + g.rect.w / 2, y: g.rect.y + g.rect.h / 2 });
+    pc.removeGlyphs((g) => g.upright && (rects.some((r) => contains(r, centre(g))) || (isSpace(g) && padded.some((r) => contains(r, centre(g))))));
     pc.commit();
   }
   for (const r of cover?.rects ?? []) page.drawRectangle({ x: r.x, y: r.y, width: r.w, height: r.h, color: rgb(...cover!.paper) });

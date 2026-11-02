@@ -301,13 +301,14 @@ extension EditSmokeTest {
                 _ = page
                 let t0 = Date()
                 // As the export panel does with "Recognize text in scanned pages": OCR a page with no text first.
-                if let only = copy.page(at: 0), (only.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let only = copy.page(at: 0), !only.hasContentText {
                     let upright = PageCompositor.upright(only)
                     if let lines = try? OCR.recognize(upright, language: nil, accurate: true).filter({ !$0.handwritten }), !lines.isEmpty,
                        let composed = PageCompositor.compose(upright, overlay: { OCR.drawInvisibleText(lines, in: $0) }) {
                         copy.replacePage(at: 0, with: composed)
                     }
                 }
+                if ProcessInfo.processInfo.environment["MKPDF_KEEP_OCR"] != nil { try? PDFExporter.data(for: copy).write(to: outDir.appendingPathComponent("\(name)-p\(p + 1)-ocr.pdf")) }
                 do {
                     let data = try CoreConverter.convert(copy, format: "docx", title: name)
                     try data.write(to: outDir.appendingPathComponent("\(name)-p\(p + 1).docx"))

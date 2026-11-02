@@ -72,7 +72,7 @@ extension EditorModel {
     func repairDocument() {
         let original = pdf
         run("Repairing…") { progress -> (PDFDocument, Int) in
-            let data = original.dataRepresentation() ?? Data()
+            let data = (try? PDFExporter.data(for: original)) ?? original.dataRepresentation() ?? Data()
             let doc = PDFDocument()
             var fixed = 0
             if let cg = CGPDFDocument(CGDataProvider(data: data as CFData)!) {

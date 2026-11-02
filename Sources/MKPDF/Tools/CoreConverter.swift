@@ -65,7 +65,9 @@ enum CoreConverter {
     /// `format` is one of docx, xlsx, pptx, html, md, txt, csv, rtf.
     static func convert(_ doc: PDFDocument, format: String, title: String) throws -> Data {
         guard let url = scriptURL, let source = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(errorDescription: "The conversion engine is missing from the app.") }
-        guard let pdf = doc.dataRepresentation(), let copy = PDFDocument(data: pdf) else { throw Failure(errorDescription: "Couldn't read this PDF.") }
+        // Written as the app saves: pages swapped in from other documents (just recognised, repaired, edited) keep their
+        // own fonts. PDFKit's own copy redraws them, which loses what ligatures stand for (Arabic "لا" read as "6").
+        guard let pdf = try? PDFExporter.data(for: doc), let copy = PDFDocument(data: pdf) else { throw Failure(errorDescription: "Couldn't read this PDF.") }
         guard let ctx = JSContext() else { throw Failure(errorDescription: "Couldn't start the conversion engine.") }
         var scriptError: String?
         ctx.exceptionHandler = { _, value in scriptError = value?.toString() }

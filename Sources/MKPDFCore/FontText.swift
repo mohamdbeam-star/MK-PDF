@@ -284,7 +284,11 @@ extension PageContent {
     /// The text of the glyphs whose centres lie in `rect`, line by line (top to bottom); nil when any of it can't be
     /// read from the fonts.
     public func string(in rect: CGRect) -> String? {
-        let inside = glyphsWithoutOverprint.filter { $0.upright && !$0.invisible && rect.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) }
+        let all = glyphsWithoutOverprint.filter { $0.upright && rect.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) }
+        // Visible text when there is some; otherwise an invisible layer's (a recognised scan), which PDFKit reads badly
+        // when it's Arabic drawn with a system font.
+        let visible = all.filter { !$0.invisible }
+        let inside = visible.isEmpty ? all : visible
         guard !inside.isEmpty else { return nil }
         var lines: [[Glyph]] = []
         for g in inside.sorted(by: { $0.origin.y > $1.origin.y }) {

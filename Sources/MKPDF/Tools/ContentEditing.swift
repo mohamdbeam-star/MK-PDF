@@ -466,10 +466,24 @@ extension EditorModel {
         }
         guard let newPage = ContentEditor.rewrite(page, edit: { content in
             guard !rects.isEmpty else { return }
-            // The line's glyphs, and the blank spaces just before or after it (otherwise they'd sit among the new letters).
+            // The line's glyphs, and the blank spaces just before or after it, including a whole run of them padding a
+            // table cell: left behind, they'd sit among the new letters and split its words when the text is read or copied.
+            let blanks = content.glyphs.filter { $0.upright && content.isBlank($0) }
+            let padded = rects.map { line -> CGRect in
+                let row = blanks.filter { abs($0.rect.midY - line.midY) < line.height / 2 }
+                // One sweep each way: a space within reach of the run so far extends it.
+                var lo = line.minX, hi = line.maxX
+                for g in row.sorted(by: { $0.rect.minX < $1.rect.minX }) {
+                    if g.rect.maxX > hi, g.rect.minX <= hi + CGFloat(g.size) * 1.5 { hi = g.rect.maxX }
+                }
+                for g in row.sorted(by: { $0.rect.maxX > $1.rect.maxX }) {
+                    if g.rect.minX < lo, g.rect.maxX >= lo - CGFloat(g.size) * 1.5 { lo = g.rect.minX }
+                }
+                return CGRect(x: lo, y: line.minY, width: hi - lo, height: line.height)
+            }
             content.removeGlyphs { g in
                 let c = CGPoint(x: g.rect.midX, y: g.rect.midY)
-                return g.upright && rects.contains { $0.contains(c) || (content.isBlank(g) && $0.insetBy(dx: -CGFloat(g.size) * 1.5, dy: 0).contains(c)) }
+                return g.upright && (rects.contains { $0.contains(c) } || (content.isBlank(g) && padded.contains { $0.contains(c) }))
             }
         }, overlay: trimmed.isEmpty && patches.isEmpty ? nil : { ctx in
             if !patches.isEmpty {

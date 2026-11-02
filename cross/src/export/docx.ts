@@ -5,7 +5,7 @@ import { strToU8, zipSync } from 'fflate';
 import {
   LayoutBox, LayoutCell, LayoutImage, LayoutItem, LayoutParagraph, LayoutRun, LayoutTable, PageLayout, lineSize, paragraphRuns, topLeft,
 } from '../engine/layout';
-import { Rect, maxX, maxY, union } from '../engine/pageContent';
+import { Rect, intersects, maxX, maxY, union } from '../engine/pageContent';
 import type { Assets } from './writers';
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -82,12 +82,16 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
       `<pic:blipFill><a:blip r:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
       `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
   };
-  /** A picture pinned to an exact spot on the page, not taking part in the text flow. */
+  /** A picture pinned to an exact spot on the page, not taking part in the text flow. It goes behind the text only
+   *  when text sits on it (a banner, a scanned page): previews in Files and Quick Look draw pictures behind text
+   *  faded, which washed out every logo. */
   const anchored = async (part: Part, layout: PageLayout, p: Placed<LayoutImage>, z: number) => {
     const g = await picture(part, layout, p.item);
     if (!g) return '';
     const cx = emu(p.r.w), cy = emu(p.r.h);
-    return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${251658240 + z}" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1">` +
+    const inner = { x: p.r.x + 1, y: p.r.y + 1, w: p.r.w - 2, h: p.r.h - 2 };
+    const behind = p.item.scan || layout.items.some((i) => i.kind !== 'image' && intersects(inner, topLeft(layout, i.rect)));
+    return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${251658240 + z}" behindDoc="${behind ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1">` +
       `<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${emu(p.r.x)}</wp:posOffset></wp:positionH>` +
       `<wp:positionV relativeFrom="page"><wp:posOffset>${emu(p.r.y)}</wp:posOffset></wp:positionV>` +
       `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>${g(cx, cy)}</wp:anchor></w:drawing></w:r>`;
