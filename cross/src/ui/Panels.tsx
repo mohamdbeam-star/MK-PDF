@@ -17,6 +17,7 @@ import { layout, nightMode, rightToLeft, Layout } from '../app/store';
 import { listFields, FieldInfo } from '../pdf/extras';
 
 const PALETTE: [number, number, number][] = [[1, 0.84, 0.1], [0.3, 0.85, 0.4], [0.25, 0.55, 1], [1, 0.35, 0.6], [1, 0.55, 0.15], [0.6, 0.35, 0.95], [0.9, 0.15, 0.15], [0, 0, 0]];
+const PALETTE_NAMES = ['Yellow', 'Green', 'Blue', 'Pink', 'Orange', 'Purple', 'Red', 'Black'];
 const css = (c: number[]) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`;
 
 function Tools({ tools }: { tools: Tool[] }) {
@@ -48,8 +49,8 @@ function Style({ font = true }: { font?: boolean }) {
   return (
     <div class="style">
       <div class="swatches">
-        {PALETTE.map((c) => <button key={c.join()} class={`swatch ${color.value.join() === c.join() ? 'on' : ''}`} style={{ background: css(c) }} onClick={() => (color.value = c)} />)}
-        <input type="color" onInput={(e) => { const h = (e.target as HTMLInputElement).value; color.value = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as never; }} />
+        {PALETTE.map((c, i) => <button key={c.join()} class={`swatch ${color.value.join() === c.join() ? 'on' : ''}`} title={PALETTE_NAMES[i]} aria-label={PALETTE_NAMES[i]} aria-pressed={color.value.join() === c.join()} style={{ background: css(c) }} onClick={() => (color.value = c)} />)}
+        <input type="color" aria-label="Other colour" title="Other colour" onInput={(e) => { const h = (e.target as HTMLInputElement).value; color.value = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as never; }} />
       </div>
       <label>Line <input type="range" min="0.5" max="12" step="0.5" value={lineWidth.value} onInput={(e) => (lineWidth.value = Number((e.target as HTMLInputElement).value))} /> <span>{lineWidth.value}</span></label>
       {font && <label>Text <input type="range" min="6" max="48" step="1" value={fontSize.value} onInput={(e) => (fontSize.value = Number((e.target as HTMLInputElement).value))} /> <span>{fontSize.value}</span></label>}
@@ -166,7 +167,7 @@ function CommentPanel() {
       <Style />
       <H>Stamps</H>
       <div class="stamps">
-        {STAMPS.map((s) => <button key={s.title} class="stamp glass-btn" style={{ color: s.color, borderColor: s.color }} onClick={async () => {
+        {STAMPS.map((s) => <button key={s.title} class="stamp glass-btn" style={{ color: `color-mix(in srgb, ${s.color} 75%, #000)`, borderColor: s.color }} onClick={async () => {
           const { png, w, h } = await stampImage(null, s, author || 'MK PDF');
           placing.value = { png, kind: 'Stamp', w, h };
           tool.value = 'stamp';

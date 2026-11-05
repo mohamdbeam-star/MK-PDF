@@ -1,7 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import {
   active, activeId, busy, closeDocument, dialog, docs, openDocument, organizing, pageIndex, panel, readMode, saveActive, scale, showPanel,
-  showSidebar, showToast, toast, tool, TOOL_INFO, Tool,
+  showSidebar, showToast, sidebarMode, toast, tool, TOOL_INFO, Tool,
 } from '../app/store';
 import * as actions from '../app/actions';
 import { exitReadMode } from '../app/actions';
@@ -36,16 +36,22 @@ const QUICK: Tool[] = ['select', 'hand', 'editContent', 'highlight', 'note', 'te
 
 function Toolbar() {
   const d = active.value!;
+  void d.version.value; // re-render after every edit, undo and redo (undo state and page count change)
   const n = d.js?.numPages ?? 0;
   const zoom = (f: number) => { const v = viewerApi.current?.viewer; if (v) v.currentScale = Math.min(10, Math.max(0.1, v.currentScale * f)); };
   return (
     <header class="toolbar glass">
       <button class="icon-btn" title="Sidebar" onClick={() => (showSidebar.value = !showSidebar.value)}><Icon name="sidebar" /></button>
       <div class="group">
-        <button class="icon-btn" title="Previous page" disabled={pageIndex.value <= 0} onClick={() => actions.goTo(pageIndex.value - 1)}><Icon name="prev" /></button>
-        <input class="page-field" value={pageIndex.value + 1} onChange={(e) => actions.goTo(Math.max(0, Math.min(n - 1, Number((e.target as HTMLInputElement).value) - 1)))} />
+        <button class="icon-btn hide-narrow" title="Previous page" disabled={pageIndex.value <= 0} onClick={() => actions.goTo(pageIndex.value - 1)}><Icon name="prev" /></button>
+        <input class="page-field" aria-label="Page number" inputMode="numeric" value={pageIndex.value + 1} onChange={(e) => {
+          const el = e.target as HTMLInputElement;
+          const want = Math.round(Number(el.value));
+          if (Number.isFinite(want) && want >= 1) actions.goTo(Math.min(n, want) - 1);
+          el.value = String(pageIndex.value + 1);
+        }} />
         <span class="muted">/ {n}</span>
-        <button class="icon-btn" title="Next page" disabled={pageIndex.value >= n - 1} onClick={() => actions.goTo(pageIndex.value + 1)}><Icon name="next" /></button>
+        <button class="icon-btn hide-narrow" title="Next page" disabled={pageIndex.value >= n - 1} onClick={() => actions.goTo(pageIndex.value + 1)}><Icon name="next" /></button>
       </div>
       <div class="group hide-narrow">
         <button class="icon-btn" title="Zoom out" onClick={() => zoom(1 / 1.2)}><Icon name="zoomout" /></button>
@@ -65,10 +71,10 @@ function Toolbar() {
       <div class="group">
         <button class="icon-btn" title={d.canUndo ? `Undo ${d.undoLabel}` : 'Undo'} disabled={!d.canUndo} onClick={actions.undo}><Icon name="undo" /></button>
         <button class="icon-btn" title={d.canRedo ? `Redo ${d.redoLabel}` : 'Redo'} disabled={!d.canRedo} onClick={actions.redo}><Icon name="redo" /></button>
-        <button class={`icon-btn ${organizing.value ? 'on' : ''}`} title="Organize pages" onClick={() => (organizing.value = !organizing.value)}><Icon name="grid" /></button>
+        <button class={`icon-btn hide-narrow ${organizing.value ? 'on' : ''}`} title="Organize pages" onClick={() => (organizing.value = !organizing.value)}><Icon name="grid" /></button>
         <button class="icon-btn" title="Save" onClick={() => saveActive(false)}><Icon name="save" /></button>
         {platform.share && <button class="icon-btn" title="Share" onClick={actions.shareActive}><Icon name="share" /></button>}
-        <button class={`icon-btn ${showPanel.value ? 'on' : ''}`} title="All tools" onClick={() => (showPanel.value = !showPanel.value)}><Icon name="panel" /></button>
+        <button class={`icon-btn hide-narrow ${showPanel.value ? 'on' : ''}`} title="All tools" onClick={() => (showPanel.value = !showPanel.value)}><Icon name="panel" /></button>
       </div>
     </header>
   );
@@ -103,7 +109,13 @@ export function App() {
         e.preventDefault();
         const i = docs.value.findIndex((x) => x.id === activeId.value);
         activeId.value = docs.value[(i + (e.shiftKey ? -1 : 1) + docs.value.length) % docs.value.length].id;
-      } else if (mod && e.key.toLowerCase() === 'f' && d) { e.preventDefault(); (document.querySelector('.search .field') as HTMLInputElement | null)?.focus(); }
+      } else if (mod && e.key.toLowerCase() === 'f' && active.value) {
+        e.preventDefault();
+        sidebarMode.value = 'search';
+        showSidebar.value = true;
+        organizing.value = false;
+        requestAnimationFrame(() => (document.querySelector('.search .field') as HTMLInputElement | null)?.focus());
+      }
       else if (e.key === 'Escape' && readMode.value) exitReadMode();
       else if (e.key === 'Escape' && !typing) tool.value = 'select';
     };

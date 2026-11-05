@@ -13,3 +13,6 @@ cross/android/local.properties
 cross/public/cmaps/
 cross/public/standard_fonts/
 cross/public/tesseract/
+cross/e2e/.data/
+cross/e2e/.out/
+cross/test-results/

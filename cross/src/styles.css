@@ -10,7 +10,7 @@
 
 :root {
   --text: #1c1c22;
-  --muted: #6b6b78;
+  --muted: #5b5b68;
   --accent: #e1306c;
   --accent-2: #7b3fe4;
   --glass: rgba(255, 255, 255, 0.58);
@@ -282,7 +282,12 @@ html[data-platform='ios'] .app { padding-left: env(safe-area-inset-left); paddin
 .panel-grabber span { display: block; width: 40px; height: 5px; border-radius: 3px; margin: 0 auto; background: rgba(120, 115, 140, 0.45); }
 @media (max-width: 860px) { .panel-grabber { display: block; } .panel { top: 30%; } }
 .fab { display: none; position: absolute; right: 14px; bottom: 14px; z-index: 45; border-radius: 999px; padding: 12px 18px; }
-@media (max-width: 860px) { .fab { display: inline-flex; } }
+@media (max-width: 860px) {
+  .fab { display: inline-flex; }
+  /* Undo, Redo and Save stay on screen; the quick tools scroll sideways between them and the page number. */
+  .toolbar .group.tools { flex: 1 1 auto; min-width: 0; }
+  .toolbar .grow { display: none; }
+}
 .mk-editbar { max-width: calc(100% - 8px); flex-wrap: wrap; }
 /* Android's web view leaves ghost copies of blurred layers when the keyboard resizes the page, so there the
    glass is drawn with richer translucent fills instead of a live blur. */

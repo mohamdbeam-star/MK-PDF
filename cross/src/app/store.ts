@@ -154,9 +154,12 @@ function remember(file: OpenedFile) {
 }
 export function clearRecents() { recents.value = []; localStorage.removeItem('mkpdf.recents'); }
 
+let lastSave = 0;
 export async function saveActive(saveAs = false) {
   const d = active.value;
-  if (!d) return;
+  // A double click, or a second click while saving, would write the file twice.
+  if (!d || busy.value || Date.now() - lastSave < 600) return;
+  lastSave = Date.now();
   await task('Saving…', async () => {
     const bytes = await d.saveBytes();
     const name = d.name.toLowerCase().endsWith('.pdf') ? d.name : `${d.name}.pdf`;

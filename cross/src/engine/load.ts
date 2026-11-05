@@ -1,5 +1,20 @@
 // Loading PDFs into pdf-lib safely.
-import { PDFDocument, type LoadOptions } from 'pdf-lib';
+import { CustomFontEmbedder, PDFDocument, type LoadOptions, type PDFContext, type PDFRef } from 'pdf-lib';
+
+/**
+ * Some fonts draw a letter as a base shape plus a separate mark glyph that stands for no character (Noto Naskh
+ * writes ب as a dotless beh and a dot). pdf-lib maps such glyphs to nothing, and readers then put the glyph's code
+ * in the text instead, so copying or searching "مرحبا" finds "مرحب\u0002ا". A zero-width joiner, which readers drop,
+ * keeps the text clean.
+ */
+type Embedder = { glyphCache: { access(): { codePoints: number[] }[] }; embedUnicodeCmap(context: PDFContext): PDFRef };
+const proto = CustomFontEmbedder.prototype as unknown as Embedder;
+const embedCmap = proto.embedUnicodeCmap;
+proto.embedUnicodeCmap = function (this: Embedder, context: PDFContext) {
+  const marks = this.glyphCache.access().filter((g) => g && !g.codePoints.length);
+  marks.forEach((g) => (g.codePoints = [0x200d]));
+  try { return embedCmap.call(this, context); } finally { marks.forEach((g) => (g.codePoints = [])); }
+};
 
 const find = (b: Uint8Array, s: string, from = 0, back = false): number => {
   const pat = Array.from(s, (c) => c.charCodeAt(0));

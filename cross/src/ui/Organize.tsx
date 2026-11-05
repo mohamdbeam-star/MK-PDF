@@ -34,7 +34,7 @@ export function Organize({ doc }: { doc: DocModel }) {
         <button class="icon-btn" title="Reverse order" onClick={() => run('Reverse', (d) => ops.reorder(d, d.getPageIndices().reverse()))}><Icon name="reverse" /></button>
         <span class="grow" />
         <span class="muted">{chosen.length ? `${chosen.length}/${n}` : `${n} pages`}</span>
-        <input type="range" min="90" max="300" value={size} onInput={(e) => setSize(Number((e.target as HTMLInputElement).value))} title="Thumbnail size" />
+        <input type="range" min="90" max="300" value={size} onInput={(e) => setSize(Number((e.target as HTMLInputElement).value))} title="Thumbnail size" aria-label="Thumbnail size" />
         <button class="glass-btn" onClick={() => (organizing.value = false)}>Done</button>
       </div>
       <div class="organize-grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${size + 24}px, 1fr))` }}>

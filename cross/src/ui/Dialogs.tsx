@@ -35,10 +35,10 @@ function Prompt({ title, label, message, initial = '', secure, resolve }: { titl
   const done = (value: string | null) => { close(); resolve(value); };
   return (
     <div class="scrim" onPointerDown={(e) => e.target === e.currentTarget && done(null)}>
-      <div class="sheet glass">
+      <div class="sheet glass" role="dialog" aria-label={title}>
         <h2>{title}</h2>
         {message && <p class="muted">{message}</p>}
-        <input ref={ref} class="field" {...({ type: secure ? 'password' : 'text' } as Record<string, string>)} placeholder={label} value={v}
+        <input ref={ref} aria-label={label || title} class="field" {...({ type: secure ? 'password' : 'text' } as Record<string, string>)} placeholder={label} value={v}
           onInput={(e) => setV((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'Enter' && done(v)} />
         <div class="sheet-buttons">
           <button class="glass-btn" onClick={() => done(null)}>Cancel</button>
@@ -53,7 +53,7 @@ function Choose({ title, options, message, resolve }: { title: string; options: 
   const done = (v: number | null) => { close(); resolve(v); };
   return (
     <div class="scrim" onPointerDown={(e) => e.target === e.currentTarget && done(null)}>
-      <div class="sheet glass">
+      <div class="sheet glass" role="dialog" aria-label={title}>
         <h2>{title}</h2>
         {message && <p class="muted">{message}</p>}
         <div class="sheet-buttons stack">

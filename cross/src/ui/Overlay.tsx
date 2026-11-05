@@ -6,6 +6,7 @@ import type { PageViewport } from 'pdfjs-dist';
 import type { DocModel } from '../pdf/doc';
 import {
   color, editObject, editStyle, fontSize, lineWidth, placing, prompt, selectedAnnot, showToast, tool, choose,
+  panel as currentPanel, showPanel,
 } from '../app/store';
 import { addLinkAt, edit } from '../app/actions';
 import * as annots from '../pdf/annots';
@@ -224,7 +225,9 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
       b && b.lines.length > 1 ? b.rect.w + 2 : undefined, b?.rect.w, cover));
   };
 
-  const comments = (list ?? []).filter((a) => annots.isComment(a) || annots.isRedaction(a) || a.subtype === 'Widget' && t === 'select');
+  // Form fields can be picked up and moved only while preparing the form; otherwise taps go to the field itself.
+  const arranging = t === 'select' && currentPanel.value === 'forms' && showPanel.value;
+  const comments = (list ?? []).filter((a) => annots.isComment(a) || annots.isRedaction(a) || a.subtype === 'Widget' && arranging);
   const sel = selectedAnnot.value?.page === page ? selectedAnnot.value : null;
   const obj = editObject.value?.page === page ? editObject.value.object : null;
   const pointer = DRAG_TOOLS.has(t) || ['ink', 'note', 'text', 'stamp', 'check', 'cross', 'dot', 'date', 'editContent'].includes(t);
@@ -353,18 +356,18 @@ function InlineEditor({ viewport, editor, onDone }: { viewport: PageViewport; ed
   return (
     <>
       <div ref={bar} class="mk-editbar glass" style={{ left: `${x - 3}px`, top: `${y - st.size * s * 0.95 - 46}px` }} onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}>
-        <button onClick={() => set({ size: Math.max(4, st.size - 1) })}>A−</button>
+        <button title="Smaller" onClick={() => set({ size: Math.max(4, st.size - 1) })}>A−</button>
         <span class="mk-size">{st.size.toFixed(1)}</span>
-        <button onClick={() => set({ size: st.size + 1 })}>A+</button>
-        <button class={st.bold ? 'on' : ''} onClick={() => set({ bold: !st.bold })}><b>B</b></button>
-        <button class={st.italic ? 'on' : ''} onClick={() => set({ italic: !st.italic })}><i>I</i></button>
-        {(['left', 'center', 'right'] as const).map((a) => <button key={a} class={st.alignment === a ? 'on' : ''} onClick={() => set({ alignment: a })}>{a === 'left' ? '⇤' : a === 'center' ? '↔' : '⇥'}</button>)}
-        <input type="color" value={'#' + st.color.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}
+        <button title="Larger" onClick={() => set({ size: st.size + 1 })}>A+</button>
+        <button title="Bold" aria-pressed={st.bold} class={st.bold ? 'on' : ''} onClick={() => set({ bold: !st.bold })}><b>B</b></button>
+        <button title="Italic" aria-pressed={st.italic} class={st.italic ? 'on' : ''} onClick={() => set({ italic: !st.italic })}><i>I</i></button>
+        {(['left', 'center', 'right'] as const).map((a) => <button key={a} title={`Align ${a}`} aria-label={`Align ${a}`} aria-pressed={st.alignment === a} class={st.alignment === a ? 'on' : ''} onClick={() => set({ alignment: a })}>{a === 'left' ? '⇤' : a === 'center' ? '↔' : '⇥'}</button>)}
+        <input type="color" aria-label="Text colour" title="Text colour" value={'#' + st.color.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}
           onInput={(e) => { const h = (e.target as HTMLInputElement).value; set({ color: [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as never }); }} />
         <button class="primary" onClick={done}>Done</button>
-        <button onClick={() => onDone(null)}>✕</button>
+        <button title="Cancel" aria-label="Cancel" onClick={() => onDone(null)}>✕</button>
       </div>
-      <div ref={ref} class="mk-editor" dir={b?.rtl || hasArabic(editor.text) ? 'rtl' : 'auto'} contentEditable style={style as never} onPointerDown={(e) => e.stopPropagation()}
+      <div ref={ref} class="mk-editor" role="textbox" aria-multiline="true" aria-label="Paragraph text" dir={b?.rtl || hasArabic(editor.text) ? 'rtl' : 'auto'} contentEditable style={style as never} onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onDone(null); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) done(); }}
         onBlur={(e) => { if (!(e.relatedTarget as HTMLElement | null)?.closest('.mk-editbar')) setTimeout(done, 0); }} />
     </>

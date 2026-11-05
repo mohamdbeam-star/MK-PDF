@@ -18,7 +18,7 @@ export function thumbnail(doc: DocModel, index: number, width: number): Promise<
     const vp = page.getViewport({ scale: 1 });
     const c = await renderPage(doc.js!, index, (width * 2) / vp.width);
     return c.toDataURL('image/jpeg', 0.8);
-  })());
+  })().catch((e) => { m.delete(key); throw e; }));
   return m.get(key)!;
 }
 
@@ -31,7 +31,8 @@ export function Thumb({ doc, index, width }: { doc: DocModel; index: number; wid
     const io = new IntersectionObserver((e) => {
       if (!e[0].isIntersecting) return;
       io.disconnect();
-      void thumbnail(doc, index, width).then((s) => alive && setSrc(s));
+      // A render is cancelled when the document changes under it; the new version draws its own.
+      thumbnail(doc, index, width).then((s) => alive && setSrc(s), () => {});
     }, { rootMargin: '300px' });
     io.observe(ref.current!);
     return () => { alive = false; io.disconnect(); };
@@ -114,7 +115,7 @@ function Comments({ doc }: { doc: DocModel }) {
 function SearchList() {
   return (
     <div class="search">
-      <input class="field" placeholder="Search" value={search.value} onInput={(e) => (search.value = (e.target as HTMLInputElement).value)} />
+      <input class="field" type="search" aria-label="Search text" placeholder="Search" value={search.value} onInput={(e) => (search.value = (e.target as HTMLInputElement).value)} />
       {search.value && <p class="muted pad">{searchResults.value.length} results</p>}
       {searchResults.value.map((r) => (
         <button key={`${r.page}:${r.index}`} class="comment" onClick={() => goTo(r.page)}>
@@ -130,8 +131,8 @@ export function Sidebar({ doc }: { doc: DocModel }) {
   return (
     <aside class="sidebar glass">
       <div class="segmented">
-        {([['thumbs', 'grid'], ['outline', 'bookmark'], ['comments', 'comment'], ['search', 'search']] as const).map(([k, icon]) => (
-          <button key={k} class={m === k ? 'on' : ''} title={k} onClick={() => (sidebarMode.value = k)}><Icon name={icon} size={16} /></button>
+        {([['thumbs', 'grid', 'Pages'], ['outline', 'bookmark', 'Bookmarks'], ['comments', 'comment', 'Comments'], ['search', 'search', 'Search']] as const).map(([k, icon, name]) => (
+          <button key={k} class={m === k ? 'on' : ''} title={name} aria-pressed={m === k} onClick={() => (sidebarMode.value = k)}><Icon name={icon} size={16} /></button>
         ))}
       </div>
       {m === 'thumbs' && <Thumbnails doc={doc} />}
