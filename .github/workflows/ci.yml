@@ -1,4 +1,5 @@
-# Checks every push and pull request: the shared engine's tests and builds, and the Mac app's build and self-test.
+# Checks every push and pull request: the shared engine's tests and builds, end-to-end tests of the shared app,
+# and the Mac app's build and self-test.
 name: Checks
 
 on:
@@ -24,6 +25,30 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run build:core
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cross
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cross/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+      - name: Keep traces and screenshots of failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: cross/e2e/.out
+          retention-days: 14
 
   mac:
     runs-on: macos-26

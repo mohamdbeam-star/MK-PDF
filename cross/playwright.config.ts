@@ -8,6 +8,9 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: true,
   workers: 4,
+  // On GitHub a failure gets one more try, and a test that passes only on the retry is reported as flaky.
+  retries: process.env.CI ? 1 : 0,
+  forbidOnly: !!process.env.CI,
   reporter: [['list'], ['json', { outputFile: 'e2e/.out/results.json' }]],
   outputDir: 'e2e/.out/artifacts',
   use: { baseURL: 'http://localhost:5199', acceptDownloads: true, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
