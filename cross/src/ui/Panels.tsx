@@ -13,7 +13,7 @@ import { DOC_FORMATS } from '../pdf/exporter';
 import { platform } from '../app/platform';
 import { Icon } from './icons';
 import { signatures, deleteSignature, stampImage, STAMPS } from './signatures';
-import { layout, nightMode, rightToLeft, Layout } from '../app/store';
+import { layout, nightMode, readingView, rightToLeft, Layout } from '../app/store';
 import { listFields, FieldInfo } from '../pdf/extras';
 
 const PALETTE: [number, number, number][] = [[1, 0.84, 0.1], [0.3, 0.85, 0.4], [0.25, 0.55, 1], [1, 0.35, 0.6], [1, 0.55, 0.15], [0.6, 0.35, 0.95], [0.9, 0.15, 0.15], [0, 0, 0]];
@@ -332,7 +332,7 @@ function ProtectPanel() {
 }
 
 function OcrPanel() {
-  const [all, setAll] = useState(true), [lang, setLang] = useState('eng+ara'), [skip, setSkip] = useState(true);
+  const [all, setAll] = useState(true), [lang, setLang] = useState('eng+ara'), [skip, setSkip] = useState(true), [clean, setClean] = useState(true);
   return (
     <>
       <p class="hint">Recognize text in scanned pages so you can search, select and copy it. Works offline.</p>
@@ -341,7 +341,8 @@ function OcrPanel() {
         <option value="eng+ara">English + Arabic</option><option value="eng">English</option><option value="ara">Arabic</option>
       </select></label>
       <label class="check"><input type="checkbox" checked={skip} onChange={(e) => setSkip((e.target as HTMLInputElement).checked)} /> Skip pages that already have text</label>
-      <button class="glass-btn prominent" onClick={() => actions.runOcr(all ? null : [pageIndex.value], lang, skip)}>Recognize text</button>
+      <label class="check"><input type="checkbox" checked={clean} onChange={(e) => setClean((e.target as HTMLInputElement).checked)} /> Straighten and clean up scans first</label>
+      <button class="glass-btn prominent" onClick={() => actions.runOcr(all ? null : [pageIndex.value], lang, skip, clean)}>Recognize text</button>
       <H>Scan</H>
       <Row icon="camera" title={platform.mobile ? 'Scan with camera' : 'Images to PDF…'} onClick={() => actions.imagesToPdf(platform.mobile)} />
     </>
@@ -371,11 +372,17 @@ function CompressPanel() {
 
 function ExportPanel() {
   const [ocr, setOcr] = useState(true), [dpi, setDpi] = useState(150), [q, setQ] = useState(0.9);
+  const [flow, setFlow] = useState(() => localStorage.getItem('mkpdf.wordFlow') === '1');
+  const setWordFlow = (v: boolean) => { setFlow(v); try { localStorage.setItem('mkpdf.wordFlow', v ? '1' : '0'); } catch { /* not kept */ } };
   return (
     <>
       <p class="hint">Layout, fonts, colours, tables and images are rebuilt from the page.</p>
       <label class="check"><input type="checkbox" checked={ocr} onChange={(e) => setOcr((e.target as HTMLInputElement).checked)} /> Recognize text in scanned pages (OCR)</label>
-      {DOC_FORMATS.map((f) => <Row key={f.id} icon="output" title={f.title} detail={f.detail} onClick={() => actions.exportAs(f.id, ocr && f.id !== 'pptx' && f.id !== 'html')} />)}
+      <label>Word layout <select aria-label="Word layout" value={flow ? 'flow' : 'layout'} onChange={(e) => setWordFlow((e.target as HTMLSelectElement).value === 'flow')}>
+        <option value="layout">Keep page layout</option><option value="flow">Flowing text (easier to edit)</option>
+      </select></label>
+      {DOC_FORMATS.map((f) => <Row key={f.id} icon="output" title={f.title} detail={f.id === 'docx' && flow ? 'Flowing paragraphs, headings, tables and images' : f.detail}
+        onClick={() => actions.exportAs(f.id, ocr && f.id !== 'pptx' && f.id !== 'html', { flow })} />)}
       <H>Images</H>
       <label>Resolution <select value={dpi} onChange={(e) => setDpi(Number((e.target as HTMLSelectElement).value))}>{[72, 150, 300, 600].map((d) => <option key={d} value={d}>{d} dpi</option>)}</select></label>
       <label>Quality <input type="range" min="0.3" max="1" step="0.05" value={q} onInput={(e) => setQ(Number((e.target as HTMLInputElement).value))} /> <span>{Math.round(q * 100)}%</span></label>
@@ -424,6 +431,7 @@ function MorePanel() {
       </select></label>
       <label class="check"><input type="checkbox" checked={rightToLeft.value} onChange={(e) => (rightToLeft.value = (e.target as HTMLInputElement).checked)} /> Right-to-left two-page reading</label>
       <label class="check"><input type="checkbox" checked={nightMode.value} onChange={(e) => (nightMode.value = (e.target as HTMLInputElement).checked)} /> Night reading mode</label>
+      <Row icon="reflow" title="Reading view" detail="Text reflowed into one column, for phones" onClick={() => (readingView.value = true)} />
       <Row icon="read" title="Read mode (full screen)" onClick={actions.enterReadMode} />
       <Row icon="speak" title="Read aloud" detail="From this page (choose again to stop)" onClick={actions.readAloud} />
       <Row icon="bookmark" title="Add bookmark for this page…" onClick={actions.addBookmarkHere} />

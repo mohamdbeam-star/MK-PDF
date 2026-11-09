@@ -186,6 +186,8 @@ Status: fixed in the working tree, not committed.
   titles, but could surprise someone whose page headings follow a numbered pattern.
 - Compare from Home opens the second file picker without a new tap. Chromium allows it; check that the Android web
   view does too.
+- Characters that no bundled font has (✓ and other symbols) vanish from edited or replaced text when the document's own font lacks them too. Nothing warns.
+- In edit mode the box around text in the built-in fonts (Helvetica, Times) can stop short of the last letter, because those fonts' widths are estimated; the edit itself is right.
 - Deleting the last page is refused with "A PDF needs at least one page". Fine, but the Delete button could be
   disabled instead.
 - Not covered at all: the Mac app (separate Swift code). BUG-001, BUG-003 and BUG-007 may or may not apply there.

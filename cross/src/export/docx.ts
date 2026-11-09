@@ -3,7 +3,7 @@
 // cell for cell (merged cells, shading, borders, row heights).
 import { strToU8, zipSync } from 'fflate';
 import {
-  LayoutBox, LayoutCell, LayoutImage, LayoutItem, LayoutParagraph, LayoutRun, LayoutTable, PageLayout, lineSize, paragraphRuns, topLeft,
+  LayoutBox, LayoutCell, LayoutImage, LayoutItem, LayoutParagraph, LayoutRun, LayoutTable, PageLayout, lineSize, paragraphRuns, paragraphText, topLeft,
 } from '../engine/layout';
 import { Rect, intersects, maxX, maxY, union } from '../engine/pageContent';
 import type { Assets } from './writers';
@@ -36,7 +36,13 @@ const cellParagraph = (c: LayoutCell): LayoutParagraph => ({
   kind: 'paragraph', rect: c.lines.reduce<Rect>((a, l) => union(a, l.rect)!, c.lines[0].rect), lines: c.lines, alignment: c.alignment, rtl: c.rtl, pitch: c.pitch,
 });
 
-export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint8Array> {
+export interface DocxOptions {
+  /** Flowing text: one continuous document with normal line spacing, real headings and pictures in line, for
+   *  editing and rewriting. Without it the Word file keeps each page's exact layout. */
+  flow?: boolean;
+}
+
+export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOptions = {}): Promise<Uint8Array> {
   const files: Record<string, Uint8Array | string> = {};
   let imageCount = 0, drawingId = 0;
 
@@ -268,6 +274,36 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
   };
 
   const doc = new Part('document');
+
+  /** A page's body as flowing paragraphs in reading order (see DocxOptions.flow). */
+  const bodyPt = bodySize / 2;
+  const flowing = async (layout: PageLayout, items: LayoutItem[], left: number) => {
+    const hasText = items.some((i) => i.kind === 'paragraph' && paragraphText(i).trim());
+    let out = '';
+    for (const item of items) {
+      if (item.kind === 'paragraph') {
+        const text = paragraphText(item).trim();
+        if (!text) continue;
+        const size = lineSize(item.lines[0]), runs = paragraphRuns(item);
+        const level = size >= bodyPt * 1.6 ? 1 : size >= bodyPt * 1.25 ? 2 : size >= bodyPt * 1.1 && runs.every((r) => r.font.bold) ? 3 : 0;
+        const jc = item.alignment === 'center' ? 'center' : item.alignment === 'right' ? (item.rtl ? '' : 'right') : item.alignment === 'justify' ? 'both' : '';
+        out += '<w:p><w:pPr>' + (level ? `<w:pStyle w:val="Heading${level}"/>` : '') + (item.rtl ? '<w:bidi/>' : '') +
+          `<w:spacing w:before="${level ? 240 : 0}" w:after="${level ? 120 : 160}" w:line="276" w:lineRule="auto"/>` + (jc ? `<w:jc w:val="${jc}"/>` : '') +
+          '</w:pPr>' + runs.map((r) => runXML({ ...r, text: r.text.replace(/\n/g, ' ') }, item.rtl, !!item.backdrop)).join('') + '</w:p>';
+      } else if (item.kind === 'table') {
+        out += tableXML(layout, item, left) + '<w:p><w:pPr><w:spacing w:before="0" w:after="160"/></w:pPr></w:p>';
+      } else if (!(item.scan && hasText)) {
+        // A scan's page picture is left out once its text is recognised: the text is the content.
+        const g = await picture(doc, layout, item);
+        if (!g) continue;
+        const width = Math.min(item.rect.w, layout.width - 2 * left);
+        const cx = emu(width), cy = emu((item.rect.h * width) / item.rect.w);
+        out += `<w:p><w:pPr><w:spacing w:before="0" w:after="160"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>` +
+          `<wp:effectExtent l="0" t="0" r="0" b="0"/>${g(cx, cy)}</wp:inline></w:drawing></w:r></w:p>`;
+      }
+    }
+    return out;
+  };
   const headers: { name: string; xml: string; part: Part; kind: 'header' | 'footer' }[] = [];
   const emptyRefs: Partial<Record<'header' | 'footer', string>> = {};
   const addFurniture = (kind: 'header' | 'footer', body: string, part: Part) => {
@@ -328,6 +364,22 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
       .filter((x) => x.r.y > lastBodyBottom + 2 && maxY(x.r) <= footTop + 1) : [];
     const footRule = footRules.sort((a, b) => b.r.y - a.r.y)[0];
     if (foot.length) { const part = new Part(''); sec.footer = addFurniture('footer', await furniture(layout, foot, part, { top: H - marginB + footerGap(foot, H - marginB), left, right: W - right }, footRule), part); anyFurniture.footer = true; }
+
+    if (opts.flow) {
+      // Page tops and bottoms stay in the text (a title that changes per page must not be lost), except page
+      // numbers, which become Word's own page number in the footer.
+      const isNumber = (p: Placed) => p.item.kind === 'paragraph' && /^(page\s*)?\d+(\s*(of|\/)\s*\d+)?$/i.test(paragraphText(p.item).trim());
+      const numbered = [...head, ...foot].some(isNumber);
+      bodies.push(await flowing(layout, [...head, ...body, ...foot].filter((p) => !isNumber(p)).map((p) => p.item), left));
+      delete sec.header;
+      delete sec.footer;
+      if (numbered) {
+        sec.footer = addFurniture('footer', '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>' +
+          '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>', new Part(''));
+      }
+      sections.push(sec);
+      continue;
+    }
 
     // Body: every paragraph's first baseline lands where it is in the PDF.
     let out = '', cursor = marginT, pending = '', z = 0;
@@ -461,6 +513,8 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
       `<w:pgMar w:top="${tw(m.t)}" w:right="${tw(m.r)}" w:bottom="${tw(m.b)}" w:left="${tw(m.l)}" w:header="${tw(m.header)}" w:footer="${tw(m.footer)}" w:gutter="0"/></w:sectPr>`;
   };
   let bodyXML = '';
+  // Flowing text runs on from page to page in one section (the first page's size, margins, header and footer).
+  if (opts.flow) { bodies.splice(0, bodies.length, bodies.join('')); sections.splice(1); }
   bodies.forEach((b, i) => {
     bodyXML += b;
     // Every page but the last ends with a tiny paragraph carrying its section (and so its page size and margins).
@@ -496,7 +550,9 @@ export async function docx(layouts: PageLayout[], assets?: Assets): Promise<Uint
     '</w:fonts>';
   files['word/settings.xml'] = `${XML_HEAD}<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
   files['word/styles.xml'] = `${XML_HEAD}<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${bf}" w:hAnsi="${bf}" w:cs="${bf}" w:eastAsia="${bf}"/><w:sz w:val="${bodySize}"/><w:szCs w:val="${bodySize}"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>` +
-    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>';
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+    [1, 2, 3].map((n) => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="${n - 1}"/></w:pPr></w:style>`).join('') +
+    '<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>';
   files['word/document.xml'] = `${XML_HEAD}<w:document ${NS}><w:body>${bodyXML}</w:body></w:document>`;
 
   const entries: Record<string, Uint8Array> = {};

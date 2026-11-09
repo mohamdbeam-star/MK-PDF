@@ -30,6 +30,8 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F10 | recognize text in scans |
 | F11 | export and compress |
 | F12 | save, tabs, closing |
+| F14 | find and replace across the document |
+| F15 | reading view (reflowed for phones) |
 | F13 | repair, compare, watermark, header and footer |
 | A11Y | axe scan of seven screens (serious and critical issues fail) |
 
@@ -68,6 +70,10 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F04-E5 | F04 | edge: re-edit | edit the same paragraph twice | editor shows the first edit; second replaces it | e2e | pass |
 | F04-E6 | F04 | happy | A+ and B on the style bar | size goes up by 1 | e2e | pass |
 | F04-E7 | F04 | edge: mobile width | edit a paragraph on a phone | edit saved | e2e | pass |
+| F04-H3 | F04 | happy | edit a paragraph set in an embedded font MK PDF doesn't bundle | new text written in that font; no substitute font added | e2e | pass |
+| F04-E8 | F04 | edge: letters missing from the subset | type "Zebra 42! Ψ" into it | falls back to a full font, text intact | e2e | pass |
+| F04-H4 | F04 | happy | drag a paragraph's width handle to a third | text reflows onto more lines, every word kept | e2e | pass |
+| F04-E9 | F04 | edge: Shift while moving | Shift-drag a paragraph diagonally | moves sideways only, same baseline | e2e | pass |
 | F05-H1 | F05 | happy | sticky note, text box, rectangle, drawing | four annotations on page 1, none on page 2 | e2e | pass |
 | F05-H2 | F05 | happy | Highlight tool, drag over a sentence | Highlight annotation | e2e | pass |
 | F05-N1 | F05 | negative: cancel | sticky note, Cancel | nothing added | e2e | pass |
@@ -89,11 +95,16 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F09-N1 | F09 | negative: mismatch | different confirm password | "Passwords don't match" | e2e | pass |
 | F10-H1 | F10 | happy | Scan & OCR › Recognize text on the scan | "INVOICE … 4471" searchable | e2e | pass |
 | F10-H2 | F10 | happy | edit mode on a scan › Make This Page Editable | paragraphs become editable | e2e | pass |
+| F10-H3 | F10 | happy | recognise a scan with a worn word | review sheet shows the word's picture; correction saved | e2e | pass |
+| F10-E1 | F10 | edge: clean scan | recognise | nothing to review | e2e | pass |
+| F10-H4 | F10 | happy | recognise a scan tilted 4° on yellowed paper | page straightened (<1.5 px climb) and whitened, text read | e2e | pass |
+| F10-E2 | F10 | edge: clean-up off | recognise with the option off | page unchanged | e2e | pass |
 | F11-H1 | F11 | happy | Export › Word (.docx) | all text, headings in page headers | e2e | pass |
 | F11-H2 | F11 | happy | every document format | each a non-empty file | e2e | pass |
 | F11-H3 | F11 | happy | PNG page images | report-1/2/3.png | e2e | pass |
 | F11-H4 | F11 | happy | Word export of a scan with recognition | real text in the .docx | e2e | pass |
 | F11-H5 | F11 | happy | Compress | valid 1-page file | e2e | pass |
+| F11-H6 | F11 | happy | Word export as flowing text | one section, no fixed line heights, every page title kept, Heading styles, page-number field | e2e | pass |
 | F12-H1 | F12 | happy | change, Save | same name, unsaved dot cleared | e2e | pass |
 | F12-E1 | F12 | edge: close unsaved | close, decline, close, accept | kept, then closed | e2e | pass |
 | F12-E2 | F12 | edge: two documents | change one, check the other | other untouched | e2e | pass |
@@ -103,6 +114,15 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F13-H2 | F13 | happy | Compare report.pdf with form.pdf | differences listed, Done closes | e2e | pass |
 | F13-H3 | F13 | happy | Watermark "CONFIDENTIAL" | on every page | e2e | pass |
 | F13-H4 | F13 | happy | Header & footer | saves | e2e | pass |
+| F14-H1 | F14 | happy | replace SECRET-123 with "ACCT-9 é" | 3 matches replaced on 3 pages, other text untouched | e2e | pass |
+| F14-H2 | F14 | happy | replace, then Undo once | every page back | e2e | pass |
+| F14-E1 | F14 | edge: whole words | "quic" finds nothing; "the" replaces 6 | partial words left alone | e2e | pass |
+| F14-E2 | F14 | edge: match case | replace "the" | "The" kept | e2e | pass |
+| F14-N1 | F14 | negative: no match | "nowhere 🦊" | message, no change, nothing to undo | e2e | pass |
+| F14-E3 | F14 | edge: embedded font | replace inside the Georgia paragraph | stays in the document's font | e2e | pass |
+| F15-H1 | F15 | happy | open Reading view (desktop and phone) | 3 headings, paragraphs, no page numbers, contents jumps, Escape closes, no sideways scroll | e2e | pass |
+| F15-H2 | F15 | happy | larger text, line spacing, reopen | size and spacing change and are remembered | e2e | pass |
+| F15-E1 | F15 | edge: scan without text | open Reading view | explains to recognise text first | e2e | pass |
 | A11Y S01–S07 | all | edge: screen reader labels, contrast | axe scan per screen | no serious or critical issues | e2e | pass after BUG-008/009 fixes |
 
 ## Edge cases that don't apply

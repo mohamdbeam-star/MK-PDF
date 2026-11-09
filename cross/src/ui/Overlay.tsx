@@ -12,7 +12,7 @@ import { addLinkAt, edit } from '../app/actions';
 import * as annots from '../pdf/annots';
 import * as ops from '../pdf/ops';
 import * as editing from '../pdf/editing';
-import { LayoutParagraph, layoutPage, lineText, paragraphText } from '../engine/layout';
+import { LayoutParagraph, editableBlocks, layoutPage, lineText, paragraphText } from '../engine/layout';
 import { pageTextItems } from '../engine/textItems';
 import { GraphicObject, PageContent, Rect, containsRect, maxX, maxY, union } from '../engine/pageContent';
 import type { AnnotInfo } from '../pdf/annots';
@@ -49,12 +49,7 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
     const pc = new PageContent(lib, lib.getPage(page));
     const layout = layoutPage(lib, page, await pageTextItems(doc.js, page + 1), pc);
     // Every paragraph, plus each table cell, can be edited.
-    const blocks: LayoutParagraph[] = layout.items.flatMap((i) => i.kind === 'paragraph' ? [i]
-      : i.kind === 'table' ? i.cells.filter((c) => c.lines.length).map((c) => ({
-        kind: 'paragraph' as const, rect: c.lines.reduce<Rect>((a, l) => union(a, l.rect)!, c.lines[0].rect), lines: c.lines,
-        alignment: c.alignment, rtl: c.rtl, pitch: c.pitch,
-      }))
-        : []);
+    const blocks = editableBlocks(layout);
     // Skip full-page backgrounds (a scan behind recognised text); they're rarely what the user means to grab.
     const c = lib.getPage(page).getCropBox();
     const inner = { x: c.x + 4, y: c.y + 4, w: c.width - 8, h: c.height - 8 };
@@ -130,7 +125,14 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
   const onMove = (e: PointerEvent) => {
     if (drag) setDrag({ a: drag.a, b: toPdf(e) });
     else if (ink) setInk([...ink, toPdf(e)]);
-    else if (moving) setMoving({ ...moving, now: toPdf(e) });
+    else if (moving) {
+      const now = toPdf(e);
+      // Shift keeps a moved paragraph on a straight line.
+      if (e.shiftKey && moving.kind === 'block' && !moving.resize) {
+        if (Math.abs(now.x - moving.start.x) > Math.abs(now.y - moving.start.y)) now.y = moving.start.y; else now.x = moving.start.x;
+      }
+      setMoving({ ...moving, now });
+    }
   };
 
   const onUp = async () => {
@@ -184,6 +186,22 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
         await edit(m.resize ? 'Resize Image' : 'Move Image', (d) => editing.moveObject(d, page, o, moved(o.bounds, dx, dy, m.resize, true)));
       } else {
         const b = m.target as LayoutParagraph;
+        if (m.resize) {
+          // A new width: the text reflows inside it at the same size.
+          if (Math.abs(dx) * s < 3) return;
+          const w = Math.max(20, b.rect.w + dx);
+          const st = editing.styleOf(b);
+          let cover: { rects: Rect[]; paper: [number, number, number] } | undefined;
+          let style = st;
+          if (isScanned(b) && doc.js) {
+            const { paper, ink } = await sampleColors(doc.js, page, b.rect);
+            cover = { rects: coverRects(b), paper };
+            style = { ...st, color: ink };
+          }
+          await edit('Resize Text Box', (d) => editing.commitText(d, page, b, paragraphText(b).replace(/\n/g, ' '), style,
+            { x: b.lines[0].rect.x, y: b.lines[0].baseline }, w, w, cover));
+          return;
+        }
         if (Math.hypot(dx, dy) * s < 4) return openEditor(b, { x: b.lines[0].rect.x, y: b.lines[0].baseline }, paragraphText(b));
         const st = editing.styleOf(b);
         await edit('Move Text', (d) => editing.commitText(d, page, b, paragraphText(b), st, { x: b.lines[0].rect.x + dx, y: b.lines[0].baseline + dy },
@@ -259,7 +277,9 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
         const r = moving.kind === 'annot' ? (moving.target as AnnotInfo).rect : (moving.target as GraphicObject).bounds;
         return <div class="mk-preview" style={previewRect(moved(r, moving.now.x - moving.start.x, moving.now.y - moving.start.y, moving.resize, moving.kind === 'object'))} />;
       })()}
-      {moving?.kind === 'block' && Math.hypot(moving.now.x - moving.start.x, moving.now.y - moving.start.y) * s > 4 &&
+      {moving?.kind === 'block' && moving.resize &&
+        <div class="mk-preview" style={previewRect({ ...(moving.target as LayoutParagraph).rect, w: Math.max(20, (moving.target as LayoutParagraph).rect.w + moving.now.x - moving.start.x) })} />}
+      {moving?.kind === 'block' && !moving.resize && Math.hypot(moving.now.x - moving.start.x, moving.now.y - moving.start.y) * s > 4 &&
         <div class="mk-preview" style={previewRect({ ...(moving.target as LayoutParagraph).rect, x: (moving.target as LayoutParagraph).rect.x + moving.now.x - moving.start.x, y: (moving.target as LayoutParagraph).rect.y + moving.now.y - moving.start.y })} />}
 
       {editing_ && content && !editor && content.blocks.map((b, i) => (
@@ -271,7 +291,15 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
             layer.current!.setPointerCapture(e.pointerId);
             const p = toPdf(e);
             setMoving({ kind: 'block', start: p, now: p, resize: false, target: b });
+          }}>
+          <div class="mk-width" title="Drag to change the width" onPointerDown={(e) => {
+            e.stopPropagation();
+            editObject.value = null;
+            layer.current!.setPointerCapture(e.pointerId);
+            const p = toPdf(e);
+            setMoving({ kind: 'block', start: p, now: p, resize: true, target: b });
           }} />
+        </div>
       ))}
       {editing_ && content && !editor && content.objects.map((o) => (
         <div key={`o${o.opIndex}`} class={`mk-obj ${obj?.opIndex === o.opIndex ? 'selected' : ''}`} style={previewRect(o.bounds)}

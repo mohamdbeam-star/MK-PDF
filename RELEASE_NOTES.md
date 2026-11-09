@@ -1,24 +1,18 @@
-## What's new in MK PDF 1.3.13
+## What's new in MK PDF 1.3.14
 
-Fixes for Windows, Android and iPhone, found by a new set of end-to-end tests.
+**Editing text**
+- Edited text keeps the document's own font on Windows, Android and iPhone whenever the font has the letters you type, so changes blend in with the rest of the page.
+- Find and replace across the whole document, on every platform: open Search, choose Replace…, then Replace all. Match case and whole words are available, and one Undo puts everything back.
+- Drag the handle on the right edge of a paragraph in edit mode to change its width; the text rewraps at the same size. Hold Shift while moving a paragraph to keep it level.
 
-**Forms**
-- Form fields take clicks and taps again: you can type into fields and tick checkboxes with the Select tool. Fields can still be moved while the Prepare Form panel is open.
+**Scans** (Windows, Android, iPhone)
+- Recognizing text now straightens tilted scans and whitens grey or yellowed paper first (on by default; turn it off in Scan & OCR).
+- Words the recognizer wasn't sure of are shown one by one, with their picture from the scan, so you can correct them before the text is saved.
 
-**Editing**
-- Arabic you type into an edit now searches and copies correctly. Letters like ب, ت, ن and ي used to leave a hidden junk character in the saved text.
-- The Undo and Redo buttons light up straight after an edit.
+**Export to Word** (Windows, Android, iPhone)
+- New choice: Keep page layout, or Flowing text, which is easier to edit: normal spacing, real headings, pictures in line, page numbers as a Word field.
 
-**Repair PDF**
-- Recovers files that were cut off at the end (an interrupted download) or whose internal index points to the wrong places. When a file can't be saved, the message now says why.
+**Reading view** (Windows, Android, iPhone)
+- The document reflowed into one column for phones, with a contents list from its headings and adjustable text size and line spacing. Open it from the book icon in the toolbar or More Tools.
 
-**Phones**
-- Undo, Redo and Save stay on screen in the toolbar; the quick tools scroll sideways instead.
-
-**Smaller fixes**
-- The page number box only accepts real page numbers; typing letters no longer breaks the page arrows.
-- Ctrl+F (Cmd+F) opens the search box.
-- A double click on Save writes the file once.
-- Screen readers can name the page number box, colour swatches, the text style bar and prompts; grey hint text and stamp buttons are easier to read.
-
-Includes everything in 1.3.12.
+Includes everything in 1.3.13.

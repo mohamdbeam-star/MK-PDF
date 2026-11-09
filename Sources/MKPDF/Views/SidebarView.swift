@@ -251,6 +251,10 @@ private func markedText(_ a: PDFAnnotation) -> String? {
 struct SearchSidebar: View {
     @ObservedObject var editor: EditorModel
     @ObservedObject var document: PDFFileDocument
+    @State private var replacing = false
+    @State private var replacement = ""
+    @State private var wholeWords = false
+    @State private var result = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -260,8 +264,21 @@ struct SearchSidebar: View {
                     .onChange(of: editor.searchText) { _, text in
                         // Search as you type once there's enough to match.
                         if text.count >= 2 || text.isEmpty { editor.runSearch() }
+                        result = ""
                     }
                 Toggle("Aa", isOn: $editor.searchCaseSensitive).toggleStyle(.button).help("Match case")
+            }
+            .padding([.horizontal, .top], 8)
+            DisclosureGroup("Replace", isExpanded: $replacing) {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Replace with", text: $replacement).textFieldStyle(.roundedBorder).onSubmit(replaceAll)
+                    Toggle("Whole words", isOn: $wholeWords).controlSize(.small)
+                    HStack {
+                        Button("Replace All", action: replaceAll).disabled(editor.searchText.isEmpty)
+                        Text(result).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 4)
             }
             .padding(8)
             if editor.searchResults.isEmpty {
@@ -280,6 +297,14 @@ struct SearchSidebar: View {
                 .listStyle(.sidebar)
             }
         }
+    }
+
+    private func replaceAll() {
+        let query = editor.searchText
+        guard !query.isEmpty else { return }
+        let n = editor.replaceAll(query, with: replacement, matchCase: editor.searchCaseSensitive, wholeWords: wholeWords)
+        result = n == 0 ? "No matches" : "Replaced \(n) \(n == 1 ? "match" : "matches")"
+        editor.runSearch()
     }
 
     static func context(_ selection: PDFSelection) -> String {

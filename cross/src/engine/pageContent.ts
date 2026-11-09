@@ -63,6 +63,9 @@ export interface Glyph {
   blank?: boolean;        // a space (code 32, or a composite font's space code its ToUnicode map doesn't call a letter)
 }
 
+/** Codes and advances for writing text with an existing font resource (see PageContent.encoderFor). */
+export interface FontEncoder { resource: string; bytesPerCode: number; codes: Map<string, number>; width(code: number): number }
+
 export interface TextShow { opIndex: number; glyphs: Glyph[]; fontSize: number; hScale: number; fontResource: string; baseFont: string }
 
 export interface GraphicObject { kind: 'image' | 'form' | 'inline'; opIndex: number; name: string; ctm: Matrix; bounds: Rect }
@@ -117,6 +120,8 @@ class FontMetrics {
   private widths = new Map<number, number>();
   /** Codes 3 and 32 of a composite font that its ToUnicode map says are letters, not spaces (some Arabic fonts). */
   notBlank = new Set<number>();
+  /** The font's ToUnicode CMap source, when it has one. */
+  toUnicode = '';
   private defaultWidth = 0;
   private scale = 0.001;
   private standard?: StandardFontEmbedder;
@@ -136,13 +141,10 @@ class FontMetrics {
         const w = cid.lookup(PDFName.of('W'));
         if (w instanceof PDFArray) this.cidWidths(w);
       }
-      const map = font.lookup(PDFName.of('ToUnicode'));
-      if (map instanceof PDFRawStream) {
-        let cmap = '';
-        try { cmap = new TextDecoder('latin1').decode(decodePDFRawStream(map).decode()); } catch { /* unreadable: keep the usual meaning */ }
-        for (const code of [3, 32]) { const t = cmapText(cmap, code); if (t !== undefined && t.trim()) this.notBlank.add(code); }
-      }
+      this.readToUnicode(font);
+      for (const code of [3, 32]) { const t = cmapText(this.toUnicode, code); if (t !== undefined && t.trim()) this.notBlank.add(code); }
     } else {
+      this.readToUnicode(font);
       this.bytesPerCode = 1;
       descriptor = lookupDict(font, 'FontDescriptor');
       const first = lookupNumber(font, 'FirstChar') ?? 0;
@@ -174,6 +176,15 @@ class FontMetrics {
     if (asc && asc > 0) this.ascent = Math.min(1.2, Math.max(0.5, asc / 1000));
     if (desc && desc < 0) this.descent = Math.max(-0.5, desc / 1000);
   }
+
+  private readToUnicode(font: PDFDict) {
+    const map = font.lookup(PDFName.of('ToUnicode'));
+    if (!(map instanceof PDFRawStream)) return;
+    try { this.toUnicode = new TextDecoder('latin1').decode(decodePDFRawStream(map).decode()); } catch { /* unreadable: keep the usual meaning */ }
+  }
+
+  /** The character a code stands for, from the ToUnicode map. */
+  text(code: number): string | undefined { return this.toUnicode ? cmapText(this.toUnicode, code) : undefined; }
 
   private cidWidths(w: PDFArray) {
     let i = 0;
@@ -362,6 +373,29 @@ export class PageContent {
   }
 
   baseFont(resource: string): string { return this.font(resource)?.baseFont ?? ''; }
+
+  /**
+   * Writing new text in a font the page already uses, the way the original was set. Each character's code comes from
+   * the font's ToUnicode map, limited to codes this page already draws with the font, so the glyph is certainly in
+   * an embedded subset. Null when the font isn't a page resource, has no ToUnicode map, or lacks a character.
+   */
+  encoderFor(resource: string, text: string): FontEncoder | null {
+    const m = this.font(resource);
+    if (!m?.toUnicode || !lookupDict(lookupDict(this.resources, 'Font'), resource)) return null;
+    const codes = new Map<string, number>();
+    let spaceCode: number | undefined;
+    for (const g of this.glyphs) {
+      if (g.fontResource !== resource || g.bytes.length !== m.bytesPerCode) continue;
+      const code = g.bytes.reduce((n, b) => n * 256 + b, 0);
+      const t = m.text(code);
+      if (!t || [...t].length !== 1) continue;
+      if (t === ' ') spaceCode ??= code;
+      else if (!codes.has(t)) codes.set(t, code);
+    }
+    if (spaceCode !== undefined) codes.set(' ', spaceCode);
+    for (const ch of text) if (ch !== '\n' && !codes.has(ch) && !/\s/.test(ch)) return null;
+    return { resource, bytesPerCode: m.bytesPerCode, codes, width: (c) => m.width(c) };
+  }
 
   /** The embedded TrueType/OpenType program of a font resource, if any. */
   fontProgram(resource: string): Uint8Array | null {

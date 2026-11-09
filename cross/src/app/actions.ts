@@ -2,7 +2,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { platform } from './platform';
 import {
-  active, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showSaved, showToast, task,
+  active, busy, dialog, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showSaved, showToast, task,
 } from './store';
 import * as ops from '../pdf/ops';
 import * as annots from '../pdf/annots';
@@ -10,7 +10,7 @@ import * as editing from '../pdf/editing';
 import { compress as compressBytes, Preset } from '../pdf/compress';
 import { repair as repairBytes } from '../pdf/security';
 import { DOC_FORMATS, DocFormat, MIME, exportDocument, exportImages } from '../pdf/exporter';
-import { addTextLayer, recognize } from '../pdf/ocr';
+import { addTextLayer, applyCorrections, recognize, type Suspect } from '../pdf/ocr';
 import { renderPage, canvasBytes } from '../pdf/render';
 import { loadPdf } from '../engine/load';
 import * as extras from '../pdf/extras';
@@ -62,7 +62,7 @@ export async function edit(label: string, fn: (doc: PDFDocument) => Promise<void
 export const undo = () => active.value?.undo();
 export const redo = () => active.value?.redo();
 
-export async function exportAs(format: DocFormat, ocr: boolean) {
+export async function exportAs(format: DocFormat, ocr: boolean, opts: { flow?: boolean } = {}) {
   const d = active.value;
   if (!d?.js) return;
   const info = DOC_FORMATS.find((f) => f.id === format)!;
@@ -83,7 +83,7 @@ export async function exportAs(format: DocFormat, ocr: boolean) {
         js = await (await import('../pdf/doc')).openPdfjs(bytes);
       }
     }
-    return exportDocument(bytes, js, format, base(d.name));
+    return exportDocument(bytes, js, format, base(d.name), opts);
   });
   if (!result) return;
   const saved = await platform.saveFile(`${base(d.name)}.${format}`, result, MIME[format]);
@@ -131,7 +131,7 @@ export async function extractImages() {
   if (where) showSaved(`Saved ${files.length} images to ${where}`);
 }
 
-export async function runOcr(pages: number[] | null, languages: string, skipText: boolean) {
+export async function runOcr(pages: number[] | null, languages: string, skipText: boolean, clean = true) {
   const d = active.value;
   if (!d?.js) return;
   await task('Recognizing text…', async (progress) => {
@@ -146,13 +146,38 @@ export async function runOcr(pages: number[] | null, languages: string, skipText
       targets = keep;
     }
     if (!targets.length) { showToast('All selected pages already contain text.'); return; }
-    const results = await recognize(js, targets, languages, progress);
+    let straightened = 0;
+    if (clean) {
+      // Straighten and whiten scans first: recognition reads them better, and the text layer lines up with the
+      // cleaned page.
+      const { cleanScans, replacePageImage, scannedPages } = await import('../pdf/enhance');
+      const scans = await scannedPages(await d.library(), js, targets);
+      const changed = await cleanScans(js, scans, (p) => progress(p * 0.3));
+      if (changed.size) {
+        await d.apply('Clean Up Scans', async (doc) => { for (const [i, c] of changed) await replacePageImage(doc, i, c.jpeg); });
+        straightened = [...changed.values()].filter((c) => Math.abs(c.e.angle) >= 0.3).length;
+      }
+    }
+    const suspects: Suspect[] = [];
+    const results = await recognize(d.js!, targets, languages, (p) => progress(clean ? 0.3 + p * 0.7 : p), suspects);
     const found = [...results.values()].reduce((n, l) => n + l.length, 0);
     if (!found) { showToast('No text found.'); return; }
+    if (suspects.length) {
+      busy.value = null; // the review sheet replaces the progress overlay
+      applyCorrections(results, suspects, await reviewWords(suspects));
+      busy.value = { label: 'Recognizing text…' };
+    }
     await d.apply('Recognize Text', (doc) => addTextLayer(doc, results));
-    showToast(`Recognized ${found} lines of text.`);
+    const notes = [straightened && `straightened ${straightened} ${straightened === 1 ? 'page' : 'pages'}`,
+      suspects.length && `reviewed ${suspects.length} uncertain ${suspects.length === 1 ? 'word' : 'words'}`].filter(Boolean);
+    showToast(`Recognized ${found} ${found === 1 ? 'line' : 'lines'} of text${notes.length ? `; ${notes.join(', ')}` : ''}.`);
     platform.notify('OCR finished', d.name);
   });
+}
+
+/** Steps through uncertain words; resolves with each word as accepted (unchanged ones included). */
+function reviewWords(suspects: Suspect[]): Promise<string[]> {
+  return new Promise((resolve) => { dialog.value = { kind: 'ocrReview', props: { suspects, resolve } }; });
 }
 
 export async function compressActive(preset: Preset) {
@@ -198,7 +223,7 @@ export async function markMatches(query: string, wholeWords: boolean) {
   if (!d?.js || !query.trim()) return 0;
   const { pageTextItems } = await import('../engine/textItems');
   const hits: { page: number; rect: { x: number; y: number; w: number; h: number } }[] = [];
-  const re = new RegExp((wholeWords ? '\\b' : '') + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (wholeWords ? '\\b' : ''), 'gi');
+  const re = searchPattern(query, { wholeWords });
   for (let i = 0; i < d.js.numPages; i++) {
     for (const it of await pageTextItems(d.js, i + 1)) {
       for (const m of it.str.matchAll(re)) {
@@ -210,6 +235,53 @@ export async function markMatches(query: string, wholeWords: boolean) {
   }
   if (hits.length) await edit('Mark for Redaction', (doc) => { for (const h of hits) annots.addRedactionMark(doc, h.page, h.rect); });
   return hits.length;
+}
+
+/** The search pattern for Find, Mark and Replace. */
+export function searchPattern(query: string, o: { matchCase?: boolean; wholeWords?: boolean } = {}) {
+  const body = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(o.wholeWords ? `(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])` : body, `gu${o.matchCase ? '' : 'i'}`);
+}
+
+/**
+ * Replaces text everywhere in the document, as one undoable step. Each paragraph with a match is rewritten the way
+ * the editor rewrites it: same font (the document's own when it has the letters), size, colour and place; on
+ * recognised scans the old letters are covered in the paper colour. Returns how many matches were replaced.
+ */
+export async function replaceText(query: string, replacement: string, o: { matchCase?: boolean; wholeWords?: boolean } = {}) {
+  const d = active.value;
+  if (!d?.js || !query) return 0;
+  const js = d.js;
+  const { pageTextItems } = await import('../engine/textItems');
+  const { layoutPage, editableBlocks, paragraphText } = await import('../engine/layout');
+  const { PageContent } = await import('../engine/pageContent');
+  const { coverRects, isScanned, sampleColors } = await import('../pdf/scan');
+  const re = searchPattern(query, o);
+  const pages: number[] = [];
+  for (let i = 0; i < js.numPages; i++) if ((await pageTextItems(js, i + 1)).some((it) => it.str.search(re) >= 0)) pages.push(i);
+  if (!pages.length) return 0;
+  let count = 0;
+  await edit('Replace', async (doc) => {
+    for (const i of pages) {
+      const layout = layoutPage(doc, i, await pageTextItems(js, i + 1), new PageContent(doc, doc.getPage(i)));
+      for (const b of editableBlocks(layout)) {
+        const text = paragraphText(b);
+        const n = [...text.matchAll(re)].length;
+        if (!n) continue;
+        count += n;
+        let style = editing.styleOf(b);
+        let cover: { rects: { x: number; y: number; w: number; h: number }[]; paper: [number, number, number] } | undefined;
+        if (isScanned(b)) {
+          const { paper, ink } = await sampleColors(js, i, b.rect);
+          cover = { rects: coverRects(b), paper };
+          style = { ...style, color: ink };
+        }
+        await editing.commitText(doc, i, b, text.replace(re, () => replacement), style, { x: b.lines[0].rect.x, y: b.lines[0].baseline },
+          b.lines.length > 1 ? b.rect.w + 2 : undefined, b.rect.w, cover);
+      }
+    }
+  });
+  return count;
 }
 
 export async function extractPagesTo(indices: number[]) {

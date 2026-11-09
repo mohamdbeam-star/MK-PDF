@@ -75,7 +75,7 @@ export async function fontFor(doc: PDFDocument, r: FontRequest): Promise<PDFFont
 }
 
 /** Splits text into lines no wider than `width` (explicit newlines kept). */
-export function wrap(text: string, font: PDFFont, size: number, width?: number): string[] {
+export function wrap(text: string, font: Pick<PDFFont, 'widthOfTextAtSize'>, size: number, width?: number): string[] {
   const out: string[] = [];
   for (const para of text.split('\n')) {
     if (!width) { out.push(para); continue; }

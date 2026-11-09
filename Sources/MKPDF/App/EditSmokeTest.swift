@@ -19,6 +19,7 @@ enum EditSmokeTest {
         runEditCoverageIfRequested()
         runEditAllIfRequested()
         runExportPagesIfRequested()
+        runReplaceAllIfRequested()
         UpdateChecker.shared.runInstallTestIfRequested()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--edit-smoke-test"), args.count > i + 2 else { return }
@@ -318,5 +319,18 @@ extension EditSmokeTest {
         }
         exit(0)
     }
-}
 
+    /// `--replace-all in.pdf out.pdf find replacement [--case] [--words]`: Replace All without UI, then saves and prints
+    /// how many matches were replaced.
+    static func runReplaceAllIfRequested() {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--replace-all"), args.count > i + 4,
+              let doc = PDFDocument(url: URL(fileURLWithPath: args[i + 1])) else { return }
+        let editor = EditorModel(document: PDFFileDocument())
+        editor.document.pdf = doc
+        let n = editor.replaceAll(args[i + 3], with: args[i + 4], matchCase: args.contains("--case"), wholeWords: args.contains("--words"))
+        try? PDFExporter.data(for: doc).write(to: URL(fileURLWithPath: args[i + 2]))
+        print("replaced \(n)")
+        exit(0)
+    }
+}

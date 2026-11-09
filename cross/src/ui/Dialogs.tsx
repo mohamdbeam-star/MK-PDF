@@ -49,6 +49,35 @@ function Prompt({ title, label, message, initial = '', secure, resolve }: { titl
   );
 }
 
+/** Uncertain OCR words, one at a time: the picture from the scan, the reading to accept or correct, the alternatives. */
+function OcrReview({ suspects, resolve }: { suspects: import('../pdf/ocr').Suspect[]; resolve: (words: string[]) => void }) {
+  const [n, setN] = useState(0);
+  const [words, setWords] = useState(() => suspects.map((s) => s.text));
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, [n]);
+  const s = suspects[n];
+  const finish = (list = words) => { close(); resolve(list); };
+  const accept = () => (n + 1 < suspects.length ? setN(n + 1) : finish());
+  const set = (v: string) => setWords(words.map((w, i) => (i === n ? v : w)));
+  return (
+    <div class="scrim">
+      <div class="sheet glass ocr-review" role="dialog" aria-label="Review recognized text">
+        <h2>Review recognized text</h2>
+        <p class="muted">Word {n + 1} of {suspects.length} · page {s.page + 1}. {suspects.length === 1 ? 'This word was' : 'These words were'} hard to read; check {suspects.length === 1 ? 'it' : 'them'} against the scan.</p>
+        <img class="ocr-word" src={s.image} alt={`Scan of the word read as “${s.text}”`} />
+        <input ref={ref} class="field" aria-label="Recognized as" value={words[n]} onInput={(e) => set((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => e.key === 'Enter' && accept()} />
+        {s.choices.length > 0 && <div class="chips">{s.choices.map((c) => <button key={c} class="chip" onClick={() => set(c)}>{c}</button>)}</div>}
+        <div class="sheet-buttons">
+          <button class="glass-btn" onClick={() => finish()}>Accept all</button>
+          {n > 0 && <button class="glass-btn" onClick={() => setN(n - 1)}>Back</button>}
+          <button class="glass-btn prominent" onClick={accept}>{n + 1 < suspects.length ? 'Accept' : 'Done'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Choose({ title, options, message, resolve }: { title: string; options: string[]; message?: string; resolve: (v: number | null) => void }) {
   const done = (v: number | null) => { close(); resolve(v); };
   return (
@@ -303,6 +332,7 @@ export function Dialogs() {
   switch (dlg.kind) {
     case 'prompt': return <Prompt {...p} />;
     case 'choose': return <Choose {...p} />;
+    case 'ocrReview': return <OcrReview {...p} />;
     case 'signature': return <SignatureDialog {...p} />;
     case 'watermark': return <WatermarkDialog />;
     case 'headerFooter': return <HeaderFooterDialog />;

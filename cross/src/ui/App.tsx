@@ -1,6 +1,6 @@
 import { useEffect } from 'preact/hooks';
 import {
-  active, activeId, busy, closeDocument, dialog, docs, openDocument, organizing, pageIndex, panel, readMode, saveActive, scale, showPanel,
+  active, activeId, busy, closeDocument, readingView, dialog, docs, openDocument, organizing, pageIndex, panel, readMode, saveActive, scale, showPanel,
   showSidebar, showToast, sidebarMode, toast, tool, TOOL_INFO, Tool,
 } from '../app/store';
 import * as actions from '../app/actions';
@@ -14,6 +14,7 @@ import { Home } from './Home';
 import { Dialogs } from './Dialogs';
 import { UpdateBanner, checkForUpdates } from './Update';
 import { Icon } from './icons';
+import { ReadingView } from './ReadingView';
 
 function Tabs() {
   return (
@@ -65,6 +66,7 @@ function Toolbar() {
             <Icon name={TOOL_INFO[t].icon} />
           </button>
         ))}
+        <button class="icon-btn" title="Reading view" onClick={() => (readingView.value = true)}><Icon name="reflow" /></button>
         <button class="icon-btn" title="Fill & Sign" onClick={() => { panel.value = 'sign'; showPanel.value = true; }}><Icon name="sign" /></button>
       </div>
       <span class="grow" />
@@ -154,6 +156,7 @@ export function App() {
           </div>
         </div>
       )}
+      {d && readingView.value && <ReadingView key={d.id} doc={d} />}
       <Dialogs />
       <Busy />
       {toast.value && (

@@ -439,6 +439,44 @@ extension EditorModel {
         undoManager?.setActionName(name)
     }
 
+    /// The pattern Replace uses: the query taken literally; whole words means no letter or digit on either side
+    /// (so it works next to accented and Arabic letters too).
+    static func replacePattern(_ query: String, matchCase: Bool, wholeWords: Bool) -> NSRegularExpression? {
+        let body = NSRegularExpression.escapedPattern(for: query)
+        return try? NSRegularExpression(pattern: wholeWords ? "(?<![\\p{L}\\p{N}])\(body)(?![\\p{L}\\p{N}])" : body,
+                                        options: matchCase ? [] : [.caseInsensitive])
+    }
+
+    /// Replaces text everywhere in the document as one undoable step. Each paragraph with a match is rewritten the way
+    /// the editor rewrites it (same font, size, colour and place; on recognised scans the old letters are covered).
+    /// Returns how many matches were replaced.
+    @discardableResult
+    func replaceAll(_ query: String, with replacement: String, matchCase: Bool, wholeWords: Bool) -> Int {
+        guard !query.isEmpty, let re = Self.replacePattern(query, matchCase: matchCase, wholeWords: wholeWords) else { return 0 }
+        let template = NSRegularExpression.escapedTemplate(for: replacement)
+        var count = 0
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping(); undoManager?.setActionName("Replace") }
+        for i in 0..<pdf.pageCount {
+            guard let text = pdf.page(at: i)?.string, re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { continue }
+            // Each edit replaces the page, so its blocks are read again; a block is done once its first line has been
+            // rewritten (the new text may match again, as in "a" → "aa").
+            var done = Set<String>()
+            let key = { (b: TextBlock) in "\(Int(b.rect.minX.rounded())):\(Int(b.firstBaseline.rounded()))" }
+            while let page = pdf.page(at: i),
+                  let b = ContentEditor.blocks(on: page).first(where: { b in
+                      !done.contains(key(b)) && re.firstMatch(in: b.text, range: NSRange(b.text.startIndex..., in: b.text)) != nil }) {
+                done.insert(key(b))
+                let range = NSRange(b.text.startIndex..., in: b.text)
+                count += re.numberOfMatches(in: b.text, range: range)
+                let new = re.stringByReplacingMatches(in: b.text, range: range, withTemplate: template)
+                commitTextEdit(page: page, original: b, text: new, font: b.font, color: b.color, alignment: b.alignment,
+                               at: CGPoint(x: b.rect.minX, y: b.firstBaseline), width: b.wrapWidth, box: b.rect.width)
+            }
+        }
+        return count
+    }
+
     /// Replaces a text block with new text, style and position, removing the original glyphs from the page.
     func commitTextEdit(page: PDFPage, original: TextBlock?, text: String, font: NSFont, color: NSColor,
                         alignment: NSTextAlignment, at origin: CGPoint, width: CGFloat?, box: CGFloat? = nil) {

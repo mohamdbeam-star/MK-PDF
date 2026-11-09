@@ -846,3 +846,13 @@ export function textBounds(l: PageLayout): Rect | null {
 }
 
 export { contains };
+
+/** Every editable paragraph of a page layout: its paragraphs plus each table cell with text. */
+export function editableBlocks(layout: PageLayout): LayoutParagraph[] {
+  return layout.items.flatMap((i) => i.kind === 'paragraph' ? [i]
+    : i.kind === 'table' ? i.cells.filter((c) => c.lines.length).map((c) => ({
+      kind: 'paragraph' as const, rect: c.lines.reduce<Rect>((a, l) => union(a, l.rect)!, c.lines[0].rect), lines: c.lines,
+      alignment: c.alignment, rtl: c.rtl, pitch: c.pitch,
+    }))
+      : []);
+}

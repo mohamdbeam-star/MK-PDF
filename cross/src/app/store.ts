@@ -54,6 +54,8 @@ export const layout = signal<Layout>(stored('mkpdf.layout', 'continuous'));
 export const rightToLeft = signal<boolean>(stored('mkpdf.rtl', false));
 export const nightMode = signal<boolean>(stored('mkpdf.night', false));
 export const readMode = signal(false);
+/** The document reflowed into one column for small screens. */
+export const readingView = signal(false);
 effect(() => {
   localStorage.setItem('mkpdf.layout', JSON.stringify(layout.value));
   localStorage.setItem('mkpdf.rtl', JSON.stringify(rightToLeft.value));

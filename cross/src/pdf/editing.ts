@@ -1,7 +1,7 @@
 // Editing existing page content: text, images, redaction. Uses the content engine on pdf-lib objects.
-import { PDFDocument, PDFName, PDFDict, PDFRawStream, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFDict, PDFHexString, PDFNumber, PDFOperator, PDFOperatorNames as Ops, PDFRawStream, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import { LayoutParagraph, lineSize } from '../engine/layout';
-import { GraphicObject, PageContent, Rect, contains, containsRect, intersects, isSpace, maxX, maxY, rect } from '../engine/pageContent';
+import { FontEncoder, GraphicObject, PageContent, Rect, contains, containsRect, intersects, isSpace, maxX, maxY, rect } from '../engine/pageContent';
 import { num, op } from '../engine/contentStream';
 import { fontFor, wrap } from './fonts';
 import { listAnnots, isRedaction, deleteAnnot } from './annots';
@@ -15,8 +15,10 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
   /** Scanned text: paint these rects in the paper colour first, hiding the old letters' pixels. */
   cover?: { rects: Rect[]; paper: [number, number, number] }) {
   const page = doc.getPage(pageIndex);
+  let own: FontEncoder | null = null;
   if (block) {
     const pc = new PageContent(doc, page);
+    own = ownFont(pc, block, style, text);
     const rects = block.lines.map((l) => ({ x: l.rect.x - 0.5, y: l.rect.y - 0.5, w: l.rect.w + 1, h: l.rect.h + 1 }));
     // The blank spaces padding each line (a table cell's fill, however long) go too: left behind, they'd sit among
     // the new letters and split its words when the text is read or copied.
@@ -35,12 +37,24 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
   }
   for (const r of cover?.rects ?? []) page.drawRectangle({ x: r.x, y: r.y, width: r.w, height: r.h, color: rgb(...cover!.paper) });
   if (!text.trim()) return;
+  const pitch = block?.pitch ?? style.size * 1.2;
+  if (own) {
+    // The paragraph's own embedded font has every letter: the new text looks exactly like the old.
+    const enc = own;
+    const measure = { widthOfTextAtSize: (t: string, s: number) => encodedWidth(enc, t) * s };
+    wrap(text, measure, style.size, wrapWidth).forEach((line, i) => {
+      const w = measure.widthOfTextAtSize(line, style.size);
+      const box = boxWidth ?? wrapWidth ?? w;
+      const x = origin.x + (style.alignment === 'center' ? (box - w) / 2 : style.alignment === 'right' ? box - w : 0);
+      drawEncoded(doc, page, enc, line, x, origin.y - i * pitch, style.size, style.color);
+    });
+    return;
+  }
   const font = await fontFor(doc, { family: style.family, bold: style.bold, italic: style.italic, text });
   // Mixed Arabic and Latin text: the Arabic font may lack Latin letters, so left-to-right runs get their own font.
   const latinText = text.replace(new RegExp(RTL_CHAR.source, 'g'), '');
   const latin = RTL_CHAR.test(text) && /\p{L}/u.test(latinText)
     ? await fontFor(doc, { family: style.family, bold: style.bold, italic: style.italic, text: latinText }) : font;
-  const pitch = block?.pitch ?? style.size * 1.2;
   const lines = wrap(text, font, style.size, wrapWidth);
   lines.forEach((line, i) => {
     const w = font.widthOfTextAtSize(line, style.size);
@@ -51,6 +65,45 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
 }
 
 const RTL_CHAR = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+
+/**
+ * The paragraph's own font, when the edit can be written with it: one embedded font for the whole paragraph, the
+ * family and weight unchanged, left-to-right text (shaped scripts need the font's shaping tables), and every new
+ * character already drawn with that font on this page. Size and colour may change.
+ */
+function ownFont(pc: PageContent, block: LayoutParagraph, style: TextStyle, text: string): FontEncoder | null {
+  const runs = block.lines.flatMap((l) => l.runs);
+  const first = runs[0];
+  if (!first || RTL_CHAR.test(text) || runs.some((r) => r.invisible || r.resource !== first.resource)) return null;
+  const was = styleOf(block);
+  if (style.family !== was.family || style.bold !== was.bold || style.italic !== was.italic) return null;
+  return pc.encoderFor(first.resource, text);
+}
+
+/** A space the font has no glyph for is a gap of a quarter em, as the original's spacing was drawn. */
+const GAP = 0.25;
+const encodedWidth = (enc: FontEncoder, text: string) =>
+  [...text].reduce((w, ch) => { const c = enc.codes.get(ch); return w + (c === undefined ? GAP : enc.width(c)); }, 0);
+
+function drawEncoded(doc: PDFDocument, page: PDFPage, enc: FontEncoder, line: string, x: number, y: number, size: number, color: [number, number, number]) {
+  const parts: (PDFHexString | PDFNumber)[] = [];
+  let hex = '';
+  const flush = () => { if (hex) parts.push(PDFHexString.of(hex)); hex = ''; };
+  for (const ch of line) {
+    const code = enc.codes.get(ch);
+    if (code === undefined) { flush(); parts.push(PDFNumber.of(-GAP * 1000)); continue; }
+    hex += code.toString(16).padStart(enc.bytesPerCode * 2, '0');
+  }
+  flush();
+  const n = (v: number) => PDFNumber.of(Math.round(v * 1000) / 1000);
+  page.pushOperators(
+    PDFOperator.of(Ops.PushGraphicsState), PDFOperator.of(Ops.BeginText),
+    PDFOperator.of(Ops.SetFontAndSize, [PDFName.of(enc.resource), n(size)]),
+    PDFOperator.of(Ops.NonStrokingColorRgb, color.map(n)),
+    PDFOperator.of(Ops.SetTextMatrix, [1, 0, 0, 1, x, y].map(n)),
+    PDFOperator.of(Ops.ShowTextAdjusted, [doc.context.obj(parts)]),
+    PDFOperator.of(Ops.EndText), PDFOperator.of(Ops.PopGraphicsState));
+}
 
 /**
  * Draws one line in visual order. The shaper lays out a whole string right to left once it sees Arabic, which

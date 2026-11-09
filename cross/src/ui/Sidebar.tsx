@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DocModel } from '../pdf/doc';
-import { pageIndex, search, searchResults, selectedAnnot, sidebarMode } from '../app/store';
-import { addBookmarkHere, deleteBookmarkAt, edit, goTo, renameBookmarkAt } from '../app/actions';
+import { pageIndex, search, searchResults, selectedAnnot, showToast, sidebarMode } from '../app/store';
+import { addBookmarkHere, deleteBookmarkAt, edit, goTo, renameBookmarkAt, replaceText } from '../app/actions';
 import * as annots from '../pdf/annots';
 import * as ops from '../pdf/ops';
 import { renderPage } from '../pdf/render';
@@ -113,9 +113,26 @@ function Comments({ doc }: { doc: DocModel }) {
 }
 
 function SearchList() {
+  const [replacing, setReplacing] = useState(false);
+  const [with_, setWith] = useState('');
+  const [matchCase, setMatchCase] = useState(false);
+  const [whole, setWhole] = useState(false);
+  const replaceAll = async () => {
+    const q = search.value;
+    const n = await replaceText(q, with_, { matchCase, wholeWords: whole });
+    showToast(n ? `Replaced ${n} ${n === 1 ? 'match' : 'matches'}` : `No matches for “${q}”`);
+  };
   return (
     <div class="search">
       <input class="field" type="search" aria-label="Search text" placeholder="Search" value={search.value} onInput={(e) => (search.value = (e.target as HTMLInputElement).value)} />
+      <button class="link" aria-expanded={replacing} onClick={() => setReplacing(!replacing)}>{replacing ? 'Hide replace' : 'Replace…'}</button>
+      {replacing && <div class="replace">
+        <input class="field" aria-label="Replace with" placeholder="Replace with" value={with_} onInput={(e) => setWith((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => e.key === 'Enter' && search.value && void replaceAll()} />
+        <label class="check"><input type="checkbox" checked={matchCase} onChange={(e) => setMatchCase((e.target as HTMLInputElement).checked)} /> Match case</label>
+        <label class="check"><input type="checkbox" checked={whole} onChange={(e) => setWhole((e.target as HTMLInputElement).checked)} /> Whole words</label>
+        <button class="glass-btn prominent" disabled={!search.value} onClick={replaceAll}>Replace all</button>
+      </div>}
       {search.value && <p class="muted pad">{searchResults.value.length} results</p>}
       {searchResults.value.map((r) => (
         <button key={`${r.page}:${r.index}`} class="comment" onClick={() => goTo(r.page)}>

@@ -76,12 +76,12 @@ function assetsFor(doc: PDFDocument, js: PDFDocumentProxy): Assets {
   };
 }
 
-export async function exportDocument(bytes: Uint8Array, js: PDFDocumentProxy, format: DocFormat, title: string): Promise<Uint8Array> {
+export async function exportDocument(bytes: Uint8Array, js: PDFDocumentProxy, format: DocFormat, title: string, opts: { flow?: boolean } = {}): Promise<Uint8Array> {
   const { doc, pages } = await layouts(bytes, js);
   const assets = assetsFor(doc, js);
   const enc = (s: string) => new TextEncoder().encode(s);
   switch (format) {
-    case 'docx': return docx(pages, assets);
+    case 'docx': return docx(pages, assets, opts);
     case 'pptx': return pptx(pages, assets);
     case 'html': return html(pages, title, assets);
     case 'xlsx': return xlsx(pages);
