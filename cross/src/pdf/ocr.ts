@@ -75,23 +75,50 @@ export function applyCorrections(results: Map<number, OcrLine[]>, suspects: Susp
 }
 
 /** Writes recognised lines as invisible text, stretched to cover each line's box. */
+const RTL_CHAR = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+
+/** A line split into right-to-left and left-to-right runs (spaces and punctuation stay with the run before), in
+ *  the order they appear on the page. One font rarely has both scripts: Arabic fonts lack Latin letters. */
+export function visualRuns(text: string): { text: string; rtl: boolean }[] {
+  const runs: { text: string; rtl: boolean }[] = [];
+  for (const ch of text) {
+    const strong = RTL_CHAR.test(ch) ? true : /[\p{L}\p{N}]/u.test(ch) ? false : null;
+    const last = runs[runs.length - 1];
+    if (last && (strong === null || strong === last.rtl)) last.text += ch;
+    else runs.push({ text: ch, rtl: strong ?? false });
+  }
+  const trimmed = runs.map((r) => ({ ...r, text: r.text.trim() })).filter((r) => r.text);
+  const firstStrong = trimmed.find((r) => /[\p{L}\p{N}]/u.test(r.text));
+  return firstStrong?.rtl ? trimmed.reverse() : trimmed;
+}
+
 export async function addTextLayer(doc: PDFDocument, results: Map<number, OcrLine[]>) {
   for (const [i, lines] of results) {
     if (!lines.length) continue;
     const page = doc.getPage(i);
     for (const l of lines) {
-      const font = await fontFor(doc, { family: 'Helvetica', bold: false, italic: false, text: l.text });
-      const key = page.node.newFontDictionary(hasArabic(l.text) ? 'MKOcrA' : 'MKOcr', font.ref);
+      // Mixed Arabic and Latin lines: each run in a font that has its letters, sharing the line's box in
+      // proportion to its natural width.
+      const runs = hasArabic(l.text) && /[A-Za-z0-9]/.test(l.text) ? visualRuns(l.text) : [{ text: l.text, rtl: hasArabic(l.text) }];
+      const fonts = await Promise.all(runs.map((r) => fontFor(doc, { family: 'Helvetica', bold: false, italic: false, text: r.text })));
+      const widths = runs.map((r, k) => fonts[k].widthOfTextAtSize(r.text, 1));
+      const total = widths.reduce((a, b) => a + b, 0) + (runs.length - 1) * 0.25;
       // The size that fills the line's width (as on the Mac): a box's height swings with ascenders and descenders,
       // so it only bounds sizes far off it. Edited text then matches the scan's own size.
-      const perPoint = font.widthOfTextAtSize(l.text, 1);
-      const size = Math.min(l.h * 1.15, Math.max(l.h * 0.5, perPoint > 0 ? l.w / perPoint : l.h * 0.85));
-      const natural = font.widthOfTextAtSize(l.text, size) || 1;
-      page.pushOperators(
-        beginText(), setFontAndSize(key, size), setTextRenderingMode(TextRenderingMode.Invisible),
-        setCharacterSqueeze(Math.max(10, Math.min(500, (l.w / natural) * 100))), setTextMatrix(1, 0, 0, 1, l.x, l.y + l.h * 0.18),
-        showText(font.encodeText(l.text)), endText(),
-      );
+      const size = Math.min(l.h * 1.15, Math.max(l.h * 0.5, total > 0 ? l.w / total : l.h * 0.85));
+      let x = l.x;
+      runs.forEach((r, k) => {
+        const box = total > 0 ? (l.w * (widths[k] + (k < runs.length - 1 ? 0.25 : 0))) / total : l.w;
+        const key = page.node.newFontDictionary(r.rtl ? 'MKOcrA' : 'MKOcr', fonts[k].ref);
+        const natural = fonts[k].widthOfTextAtSize(r.text, size) || 1;
+        const fit = k < runs.length - 1 ? box - 0.25 * size : box;
+        page.pushOperators(
+          beginText(), setFontAndSize(key, size), setTextRenderingMode(TextRenderingMode.Invisible),
+          setCharacterSqueeze(Math.max(10, Math.min(500, (fit / natural) * 100))), setTextMatrix(1, 0, 0, 1, x, l.y + l.h * 0.18),
+          showText(fonts[k].encodeText(r.text)), endText(),
+        );
+        x += box;
+      });
     }
   }
 }

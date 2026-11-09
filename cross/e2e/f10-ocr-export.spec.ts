@@ -89,6 +89,8 @@ test.describe('F10 review uncertain words', () => {
   test('F10-H3 uncertain words are offered for review and corrections are saved', async ({ page, errors }) => {
     await openDoc(page, 'scan-hard.pdf', 1);
     await panel(page, 'Scan & OCR');
+    // English only: without Arial (Linux) the worn word can otherwise be read as Arabic.
+    await page.getByRole('combobox', { name: 'Language' }).selectOption('eng');
     await page.getByRole('button', { name: 'Recognize text' }).click();
     const review = page.getByRole('dialog', { name: 'Review recognized text' });
     await expect(review).toBeVisible({ timeout: 200_000 });

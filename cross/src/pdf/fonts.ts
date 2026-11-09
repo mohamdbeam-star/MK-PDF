@@ -3,6 +3,8 @@
 import fontkit from '@pdf-lib/fontkit';
 import { StandardFonts, type PDFDocument, type PDFFont } from 'pdf-lib';
 import { platform } from '../app/platform';
+// Marks that stand for no character get a clean ToUnicode entry (set up where PDFs are loaded).
+import '../engine/load';
 
 const cache = new Map<string, Promise<Uint8Array | null>>();
 const bundled = (file: string) => {
