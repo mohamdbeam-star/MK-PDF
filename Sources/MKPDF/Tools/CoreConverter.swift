@@ -62,8 +62,9 @@ enum CoreConverter {
         return ctx.makeImage() ?? image
     }
 
-    /// `format` is one of docx, xlsx, pptx, html, md, txt, csv, rtf.
-    static func convert(_ doc: PDFDocument, format: String, title: String) throws -> Data {
+    /// `format` is one of docx, xlsx, pptx, html, md, txt, csv, rtf. `flow` makes a Word file flowing text (one
+    /// continuous document, normal spacing, real headings) instead of each page's exact layout.
+    static func convert(_ doc: PDFDocument, format: String, title: String, flow: Bool = false, images: Bool = true, comments: Bool = true) throws -> Data {
         guard let url = scriptURL, let source = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(errorDescription: "The conversion engine is missing from the app.") }
         // Written as the app saves: pages swapped in from other documents (just recognised, repaired, edited) keep their
         // own fonts. PDFKit's own copy redraws them, which loses what ligatures stand for (Arabic "لا" read as "6").
@@ -130,7 +131,7 @@ enum CoreConverter {
         let t1 = Date()
         if let e = scriptError { throw Failure(errorDescription: "Conversion engine error: \(e)") }
 
-        guard let core = ctx.objectForKeyedSubscript("MKPDFCore"), let promise = core.invokeMethod("convert", withArguments: [pdf.base64EncodedString(), "", format, title]) else {
+        guard let core = ctx.objectForKeyedSubscript("MKPDFCore"), let promise = core.invokeMethod("convert", withArguments: [pdf.base64EncodedString(), "", format, title, "{\"flow\":\(flow),\"images\":\(images),\"comments\":\(comments)}"]) else {
             throw Failure(errorDescription: "Conversion engine error: \(scriptError ?? "not loaded")")
         }
         // Everything inside is synchronous or a microtask, so the promise has settled once the call returns.

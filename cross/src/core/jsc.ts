@@ -3,6 +3,7 @@
 import { PageContent, type GraphicObject } from '../engine/pageContent';
 import type { PageText, TextItem } from '../engine/layout';
 import { convertLayouts, layoutsFor, type DocFormat } from './convert';
+import { pdfComments } from '../export/comments';
 
 declare const nativeRender: (page: number, x: number, y: number, w: number, h: number) => string | null;
 declare const nativeBackground: (page: number, keepText: boolean) => string | null;
@@ -31,7 +32,7 @@ function toBase64(b: Uint8Array): string {
   return s;
 }
 
-export async function convert(pdf: string, pagesJSON: string, format: DocFormat, title: string): Promise<string> {
+export async function convert(pdf: string, pagesJSON: string, format: DocFormat, title: string, optionsJSON = ''): Promise<string> {
   const bytes = fromBase64(pdf);
   // Page text: the app's lookup by rect when it offers one, else the text items it passed.
   const text = pagesJSON ? (JSON.parse(pagesJSON) as TextItem[][]) : [];
@@ -58,7 +59,10 @@ export async function convert(pdf: string, pagesJSON: string, format: DocFormat,
       const jpg = nativeBackground(page, keepText);
       return jpg ? fromBase64(jpg) : null;
     },
-  });
+  }, (() => {
+    const o = optionsJSON ? (JSON.parse(optionsJSON) as { flow?: boolean; images?: boolean; comments?: boolean }) : {};
+    return { flow: o.flow, images: o.images, comments: o.comments === false ? [] : pdfComments(doc) };
+  })());
   return toBase64(out);
 }
 

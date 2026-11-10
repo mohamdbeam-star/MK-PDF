@@ -371,23 +371,33 @@ function CompressPanel() {
 }
 
 function ExportPanel() {
-  const [ocr, setOcr] = useState(true), [dpi, setDpi] = useState(150), [q, setQ] = useState(0.9);
+  const [ocr, setOcr] = useState(true), [dpi, setDpi] = useState(150), [q, setQ] = useState(0.9), [minPx, setMinPx] = useState(0);
   const [flow, setFlow] = useState(() => localStorage.getItem('mkpdf.wordFlow') === '1');
   const setWordFlow = (v: boolean) => { setFlow(v); try { localStorage.setItem('mkpdf.wordFlow', v ? '1' : '0'); } catch { /* not kept */ } };
+  const [images, setImagesState] = useState(() => localStorage.getItem('mkpdf.exportImages') !== '0');
+  const setImages = (v: boolean) => { setImagesState(v); try { localStorage.setItem('mkpdf.exportImages', v ? '1' : '0'); } catch { /* not kept */ } };
+  const [comments, setCommentsState] = useState(() => localStorage.getItem('mkpdf.exportComments') !== '0');
+  const setComments = (v: boolean) => { setCommentsState(v); try { localStorage.setItem('mkpdf.exportComments', v ? '1' : '0'); } catch { /* not kept */ } };
   return (
     <>
       <p class="hint">Layout, fonts, colours, tables and images are rebuilt from the page.</p>
       <label class="check"><input type="checkbox" checked={ocr} onChange={(e) => setOcr((e.target as HTMLInputElement).checked)} /> Recognize text in scanned pages (OCR)</label>
+      <label class="check"><input type="checkbox" checked={images} onChange={(e) => setImages((e.target as HTMLInputElement).checked)} /> Include pictures</label>
+      <label class="check"><input type="checkbox" checked={comments} onChange={(e) => setComments((e.target as HTMLInputElement).checked)} /> Include comments (Word)</label>
       <label>Word layout <select aria-label="Word layout" value={flow ? 'flow' : 'layout'} onChange={(e) => setWordFlow((e.target as HTMLSelectElement).value === 'flow')}>
         <option value="layout">Keep page layout</option><option value="flow">Flowing text (easier to edit)</option>
       </select></label>
       {DOC_FORMATS.map((f) => <Row key={f.id} icon="output" title={f.title} detail={f.id === 'docx' && flow ? 'Flowing paragraphs, headings, tables and images' : f.detail}
-        onClick={() => actions.exportAs(f.id, ocr && f.id !== 'pptx' && f.id !== 'html', { flow })} />)}
+        onClick={() => actions.exportAs(f.id, ocr && f.id !== 'pptx' && f.id !== 'html', { flow, images, comments })} />)}
+      <Row icon="crop" title="Selected area…" detail="Drag a box on the page, then choose Word, Excel or CSV" onClick={() => { tool.value = 'exportArea'; organizing.value = false; showToast('Drag a box around the text or table to export.'); }} />
       <H>Images</H>
       <label>Resolution <select value={dpi} onChange={(e) => setDpi(Number((e.target as HTMLSelectElement).value))}>{[72, 150, 300, 600].map((d) => <option key={d} value={d}>{d} dpi</option>)}</select></label>
       <label>Quality <input type="range" min="0.3" max="1" step="0.05" value={q} onInput={(e) => setQ(Number((e.target as HTMLInputElement).value))} /> <span>{Math.round(q * 100)}%</span></label>
       <div class="chips">{(['png', 'jpeg', 'webp'] as const).map((t) => <button key={t} class="glass-btn" onClick={() => actions.exportPageImages(t, dpi, q)}>{t.toUpperCase()}</button>)}</div>
-      <Row icon="image" title="Extract embedded images" detail="Original JPEGs are saved unchanged" onClick={actions.extractImages} />
+      <label>Skip pictures under <select aria-label="Skip pictures under" value={minPx} onChange={(e) => setMinPx(Number((e.target as HTMLSelectElement).value))}>
+        {[0, 32, 100, 300].map((v) => <option key={v} value={v}>{v ? `${v} px` : 'Keep all'}</option>)}
+      </select></label>
+      <Row icon="image" title="Extract embedded images" detail="Original JPEGs are saved unchanged" onClick={() => actions.extractImages(minPx)} />
       <H>PDF</H>
       <Row icon="output" title="Selected pages as PDF…" onClick={async () => {
         const n = active.value?.js?.numPages ?? 1;

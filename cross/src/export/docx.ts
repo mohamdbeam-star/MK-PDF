@@ -7,6 +7,7 @@ import {
 } from '../engine/layout';
 import { Rect, intersects, maxX, maxY, union } from '../engine/pageContent';
 import type { Assets } from './writers';
+import type { ExportComment } from './comments';
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -40,6 +41,8 @@ export interface DocxOptions {
   /** Flowing text: one continuous document with normal line spacing, real headings and pictures in line, for
    *  editing and rewriting. Without it the Word file keeps each page's exact layout. */
   flow?: boolean;
+  /** The PDF's comments, written as Word comments on the nearest paragraph of their page. */
+  comments?: ExportComment[];
 }
 
 export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOptions = {}): Promise<Uint8Array> {
@@ -54,6 +57,26 @@ export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOpt
   }
   const top = <K,>(m: Map<K, number>, d: K) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? d;
   const bodyFont = top(famCount, 'Calibri'), bodySize = top(sizeCount, 22);
+
+  // Each comment goes on the paragraph of its page nearest to it (overlapping first, then the closest by height).
+  const commentsOn = new Map<LayoutParagraph, number[]>();
+  (opts.comments ?? []).forEach((c, id) => {
+    const paras = layouts.find((l) => l.index === c.page)?.items.filter((i): i is LayoutParagraph => i.kind === 'paragraph') ?? [];
+    const mid = c.rect.y + c.rect.h / 2;
+    const dist = (p: LayoutParagraph) => (intersects(p.rect, c.rect) ? -1 : Math.min(Math.abs(p.rect.y - mid), Math.abs(maxY(p.rect) - mid)));
+    const target = paras.sort((a, b) => dist(a) - dist(b))[0];
+    if (target) commentsOn.set(target, [...(commentsOn.get(target) ?? []), id]);
+  });
+  /** A paragraph's XML with its comments marked around the text. */
+  const withComments = (p: LayoutParagraph, x: string) => {
+    const ids = commentsOn.get(p);
+    if (!ids) return x;
+    const start = ids.map((id) => `<w:commentRangeStart w:id="${id}"/>`).join('');
+    const end = ids.map((id) => `<w:commentRangeEnd w:id="${id}"/><w:r><w:commentReference w:id="${id}"/></w:r>`).join('');
+    const at = x.indexOf('</w:pPr>');
+    const open = at >= 0 ? at + '</w:pPr>'.length : x.indexOf('>') + 1;
+    return x.slice(0, open) + start + x.slice(open, x.lastIndexOf('</w:p>')) + end + '</w:p>';
+  };
 
   const families = new Set<string>();
   const runXML = (r: LayoutRun, rtl: boolean, onColour = false) => {
@@ -139,7 +162,7 @@ export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOpt
     if (stops.length) ppr += '<w:tabs>' + stops.map((x) => `<w:tab w:val="left" w:pos="${tw(topLeft(layout, { x, y: p.rect.y, w: 0, h: 0 }).x - frameLeft)}"/>`).join('') + '</w:tabs>';
     if (p.backdrop) ppr += `<w:shd w:val="clear" w:color="auto" w:fill="${hex(p.backdrop.color)}"/>`;
     ppr += `<w:jc w:val="${jc}"/>`;
-    return `<w:p><w:pPr>${ppr}</w:pPr>${extra}${paragraphRuns(p).map((x) => runXML(x, p.rtl, !!p.backdrop || !!p.onImage || onColour)).join('')}</w:p>`;
+    return withComments(p, `<w:p><w:pPr>${ppr}</w:pPr>${extra}${paragraphRuns(p).map((x) => runXML(x, p.rtl, !!p.backdrop || !!p.onImage || onColour)).join('')}</w:p>`);
   };
   const lineHeightOf = (p: { lines: LayoutParagraph['lines']; pitch: number }) => {
     const size = lineSize(p.lines[0]);
@@ -287,9 +310,9 @@ export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOpt
         const size = lineSize(item.lines[0]), runs = paragraphRuns(item);
         const level = size >= bodyPt * 1.6 ? 1 : size >= bodyPt * 1.25 ? 2 : size >= bodyPt * 1.1 && runs.every((r) => r.font.bold) ? 3 : 0;
         const jc = item.alignment === 'center' ? 'center' : item.alignment === 'right' ? (item.rtl ? '' : 'right') : item.alignment === 'justify' ? 'both' : '';
-        out += '<w:p><w:pPr>' + (level ? `<w:pStyle w:val="Heading${level}"/>` : '') + (item.rtl ? '<w:bidi/>' : '') +
+        out += withComments(item, '<w:p><w:pPr>' + (level ? `<w:pStyle w:val="Heading${level}"/>` : '') + (item.rtl ? '<w:bidi/>' : '') +
           `<w:spacing w:before="${level ? 240 : 0}" w:after="${level ? 120 : 160}" w:line="276" w:lineRule="auto"/>` + (jc ? `<w:jc w:val="${jc}"/>` : '') +
-          '</w:pPr>' + runs.map((r) => runXML({ ...r, text: r.text.replace(/\n/g, ' ') }, item.rtl, !!item.backdrop)).join('') + '</w:p>';
+          '</w:pPr>' + runs.map((r) => runXML({ ...r, text: r.text.replace(/\n/g, ' ') }, item.rtl, !!item.backdrop)).join('') + '</w:p>');
       } else if (item.kind === 'table') {
         out += tableXML(layout, item, left) + '<w:p><w:pPr><w:spacing w:before="0" w:after="160"/></w:pPr></w:p>';
       } else if (!(item.scan && hasText)) {
@@ -554,6 +577,16 @@ export async function docx(layouts: PageLayout[], assets?: Assets, opts: DocxOpt
     [1, 2, 3].map((n) => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="${n - 1}"/></w:pPr></w:style>`).join('') +
     '<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>';
   files['word/document.xml'] = `${XML_HEAD}<w:document ${NS}><w:body>${bodyXML}</w:body></w:document>`;
+  const placed = (opts.comments ?? []).map((c, id) => ({ c, id })).filter(({ id }) => [...commentsOn.values()].some((l) => l.includes(id)));
+  if (placed.length) {
+    const initials = (a: string) => a.split(/\s+/).map((w) => [...w][0] ?? '').join('').slice(0, 3);
+    files['word/comments.xml'] = `${XML_HEAD}<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` + placed.map(({ c, id }) =>
+      `<w:comment w:id="${id}" w:author="${xml(c.author)}" w:initials="${xml(initials(c.author))}"${c.date ? ` w:date="${c.date}"` : ''}>` +
+      c.text.split(/\r?\n/).map((line, k) => `<w:p>${k ? '' : '<w:r><w:annotationRef/></w:r>'}<w:r><w:t xml:space="preserve">${xml(line)}</w:t></w:r></w:p>`).join('') +
+      '</w:comment>').join('') + '</w:comments>';
+    files['word/_rels/document.xml.rels'] = (files['word/_rels/document.xml.rels'] as string).replace('</Relationships>', `<Relationship Id="rIdComments" Type="${REL}/comments" Target="comments.xml"/></Relationships>`);
+    files['[Content_Types].xml'] = (files['[Content_Types].xml'] as string).replace('</Types>', '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>');
+  }
 
   const entries: Record<string, Uint8Array> = {};
   for (const [k, v] of Object.entries(files)) entries[k] = typeof v === 'string' ? strToU8(v) : v;

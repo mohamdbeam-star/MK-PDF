@@ -37,6 +37,13 @@ enum ExportFormat {
 
     var isImage: Bool { [.png, .jpeg, .tiff, .heic, .webp, .bmp, .gif].contains(self) }
 
+    /// Settings key: Word exports as flowing text rather than each page's exact layout.
+    static let wordFlowKey = "wordFlowingText"
+    /// Settings key: document exports include pictures (on unless turned off).
+    static let imagesKey = "exportPictures"
+    /// Settings key: Word exports carry the PDF's comments as Word comments (on unless turned off).
+    static let commentsKey = "exportComments"
+
     /// The shared conversion core's name for this format, if it writes it.
     private var coreFormat: String? {
         switch self {
@@ -57,7 +64,11 @@ enum ExportFormat {
     func render(_ doc: PDFDocument, title: String, progress: (Double) -> Void = { _ in }) throws -> Data {
         if let format = coreFormat, CoreConverter.isAvailable {
             do {
-                let data = try CoreConverter.convert(doc, format: format, title: title)
+                // Word as flowing text when chosen in the Export panel (Word 97 and OpenDocument follow it too).
+                let flow = format == "docx" && UserDefaults.standard.bool(forKey: Self.wordFlowKey)
+                let images = UserDefaults.standard.object(forKey: Self.imagesKey) as? Bool ?? true
+                let comments = UserDefaults.standard.object(forKey: Self.commentsKey) as? Bool ?? true
+                let data = try CoreConverter.convert(doc, format: format, title: title, flow: flow, images: images, comments: comments)
                 progress(1)
                 guard self == .word97 || self == .odt else { return data }
                 // Older Word and OpenDocument: converted from the Word file by the system's text system.

@@ -9,7 +9,7 @@ export type Tool =
   | 'select' | 'hand' | 'editContent'
   | 'highlight' | 'underline' | 'strikeout' | 'note' | 'text' | 'ink' | 'rect' | 'oval' | 'line' | 'arrow' | 'eraser'
   | 'stamp' | 'check' | 'cross' | 'dot' | 'date'
-  | 'whiteout' | 'retype' | 'link' | 'crop' | 'redact' | 'textField' | 'checkbox' | 'dropdown';
+  | 'whiteout' | 'retype' | 'link' | 'crop' | 'redact' | 'textField' | 'checkbox' | 'dropdown' | 'exportArea';
 
 export type Panel = 'edit' | 'comment' | 'sign' | 'organize' | 'forms' | 'redact' | 'protect' | 'ocr' | 'compress' | 'export' | 'more';
 
@@ -22,7 +22,7 @@ export const TOOL_INFO: Record<Tool, { title: string; icon: string }> = {
   cross: { title: 'Cross', icon: 'x' }, dot: { title: 'Dot', icon: 'dot' }, date: { title: 'Date', icon: 'calendar' },
   whiteout: { title: 'Whiteout', icon: 'whiteout' }, retype: { title: 'Cover & Retype', icon: 'textbox' }, link: { title: 'Link', icon: 'link' }, crop: { title: 'Crop', icon: 'crop' },
   redact: { title: 'Mark for Redaction', icon: 'eyeoff' }, textField: { title: 'Text Field', icon: 'field' }, checkbox: { title: 'Checkbox', icon: 'checkbox' },
-  dropdown: { title: 'Dropdown', icon: 'dropdown' },
+  dropdown: { title: 'Dropdown', icon: 'dropdown' }, exportArea: { title: 'Export Area', icon: 'output' },
 };
 
 export const PANELS: { id: Panel; title: string; icon: string }[] = [

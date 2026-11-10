@@ -39,7 +39,7 @@ function createWindow() {
     backgroundColor: '#00000000',
     backgroundMaterial: 'mica', // Windows 11 glass behind the app's own translucent panels
     autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, spellcheck: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, spellcheck: true },
   });
   Menu.setApplicationMenu(null);
   win.loadURL('app://mkpdf/index.html');
@@ -57,6 +57,17 @@ function createWindow() {
       app.exit(state.app && state.bridge && !errors.length ? 0 : 1);
     }, Number(process.env.MKPDF_SMOKE_WAIT || 4000)));
   }
+  // Right-click in text being typed: spelling suggestions (Windows' own spell checker) and the usual editing commands.
+  win.webContents.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return;
+    const items = params.dictionarySuggestions.slice(0, 6).map((s) => ({ label: s, click: () => win.webContents.replaceMisspelling(s) }));
+    if (params.misspelledWord) {
+      if (!items.length) items.push({ label: 'No suggestions', enabled: false });
+      items.push({ label: 'Add to dictionary', click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord) }, { type: 'separator' });
+    }
+    items.push({ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }, { role: 'selectAll' });
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.on('close', (e) => {
     if (!dirty) return;

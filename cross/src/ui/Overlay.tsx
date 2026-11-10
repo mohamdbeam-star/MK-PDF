@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { hasArabic } from '../pdf/fonts';
+import { shiftScript } from '../pdf/scripts';
 import { coverRects, isScanned, sampleColors } from '../pdf/scan';
 import { PDFDocument } from 'pdf-lib';
 import type { PageViewport } from 'pdfjs-dist';
@@ -35,7 +36,7 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): T | null {
   return v;
 }
 
-const DRAG_TOOLS = new Set(['rect', 'oval', 'line', 'arrow', 'whiteout', 'retype', 'redact', 'link', 'crop', 'textField', 'checkbox', 'dropdown']);
+const DRAG_TOOLS = new Set(['rect', 'oval', 'line', 'arrow', 'whiteout', 'retype', 'redact', 'link', 'crop', 'textField', 'checkbox', 'dropdown', 'exportArea']);
 
 export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: number; viewport: PageViewport }) {
   const layer = useRef<HTMLDivElement>(null);
@@ -148,6 +149,7 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
       else if (t === 'retype' && !tiny) await (await import('../app/actions')).coverAndRetype(page, r);
       else if (t === 'redact' && !tiny) await edit('Mark for Redaction', (d) => annots.addRedactionMark(d, page, r));
       else if (t === 'link' && !tiny) await addLinkAt(page, r);
+      else if (t === 'exportArea' && !tiny) await (await import('../app/actions')).exportAreaAs(page, r);
       else if (t === 'crop' && !tiny) {
         const all = await choose('Crop pages', ['This page', 'All pages']);
         if (all !== null) await edit('Crop', (d) => ops.cropPages(d, all ? d.getPageIndices() : [page], r));
@@ -340,6 +342,9 @@ export function PageOverlay({ doc, page, viewport }: { doc: DocModel; page: numb
   );
 }
 
+/** Fonts offered for edited text besides the paragraph's own: common families every platform can match. */
+const FONT_CHOICES = ['Arial', 'Times New Roman', 'Georgia', 'Courier New', 'Noto Sans', 'Noto Serif'];
+
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`;
 
 /** Text editor sitting exactly over a paragraph, in its font, at the current zoom. */
@@ -347,15 +352,18 @@ function InlineEditor({ viewport, editor, onDone }: { viewport: PageViewport; ed
   const ref = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const st = editStyle.value!;
+  const [original] = useState(st);
   const s = viewport.scale;
   const b = editor.block;
-  const pitch = (b?.pitch ?? st.size * 1.2) * s;
+  const pitch = (b?.pitch ?? st.size * 1.2) * (st.lineSpacing ?? 1) * s;
   const [x, y] = viewport.convertToViewportPoint(editor.origin.x, editor.origin.y);
   const width = b ? b.rect.w * s + 6 : undefined;
   const style = useMemo(() => ({
     left: `${x - 3}px`, top: `${y - st.size * s * 0.95}px`, minWidth: `${Math.max(60, width ?? 120)}px`, width: b && b.lines.length > 1 ? `${width}px` : undefined,
     fontFamily: `'${st.family}', 'Noto Sans', 'Noto Naskh Arabic', sans-serif`, fontSize: `${st.size * s}px`, lineHeight: `${pitch}px`,
-    fontWeight: st.bold ? 700 : 400, fontStyle: st.italic ? 'italic' : 'normal', color: css(st.color), textAlign: st.alignment === 'justify' ? 'left' : st.alignment,
+    fontWeight: st.bold ? 700 : 400, fontStyle: st.italic ? 'italic' : 'normal', color: css(st.color), textAlign: st.alignment,
+    textDecoration: st.underline ? 'underline' : 'none', letterSpacing: st.charSpacing ? `${st.charSpacing * st.size * s}px` : undefined,
+    fontStretch: st.hScale ? `${st.hScale}%` : undefined,
     whiteSpace: b && b.lines.length > 1 ? 'pre-wrap' : 'pre',
   }), [x, y, s, st, width]);
   useEffect(() => {
@@ -380,22 +388,54 @@ function InlineEditor({ viewport, editor, onDone }: { viewport: PageViewport; ed
     el.style.top = `${above >= 4 ? above : ed.offsetTop + ed.offsetHeight + 8}px`;
   });
   const done = () => onDone(ref.current?.innerText.replace(/\n$/, '') ?? null);
+  /** Raises or lowers the selected characters (or puts them back), as Unicode superscript or subscript. */
+  const shift = (kind: 'super' | 'sub') => {
+    const sel = window.getSelection();
+    if (!sel?.rangeCount || sel.isCollapsed || !ref.current?.contains(sel.anchorNode)) return showToast('Select the characters to raise or lower first.');
+    const next = shiftScript(sel.toString(), kind);
+    if (next === null) return showToast('Only digits, + − = ( ) and some small letters can be raised or lowered.');
+    document.execCommand('insertText', false, next);
+  };
   const set = (p: Partial<typeof st>) => (editStyle.value = { ...st, ...p });
   return (
     <>
-      <div ref={bar} class="mk-editbar glass" style={{ left: `${x - 3}px`, top: `${y - st.size * s * 0.95 - 46}px` }} onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}>
-        <button title="Smaller" onClick={() => set({ size: Math.max(4, st.size - 1) })}>A−</button>
+      <div ref={bar} class="mk-editbar glass" style={{ left: `${x - 3}px`, top: `${y - st.size * s * 0.95 - 46}px` }} onPointerDown={(e) => {
+        e.stopPropagation();
+        // Buttons keep the text's selection; menus and the colour picker need the press to open.
+        if (!(e.target as HTMLElement).closest('select, input')) e.preventDefault();
+      }}>
+        <button title="Smaller" aria-label="Smaller" onClick={() => set({ size: Math.max(4, st.size - 1) })}>A−</button>
         <span class="mk-size">{st.size.toFixed(1)}</span>
-        <button title="Larger" onClick={() => set({ size: st.size + 1 })}>A+</button>
-        <button title="Bold" aria-pressed={st.bold} class={st.bold ? 'on' : ''} onClick={() => set({ bold: !st.bold })}><b>B</b></button>
-        <button title="Italic" aria-pressed={st.italic} class={st.italic ? 'on' : ''} onClick={() => set({ italic: !st.italic })}><i>I</i></button>
-        {(['left', 'center', 'right'] as const).map((a) => <button key={a} title={`Align ${a}`} aria-label={`Align ${a}`} aria-pressed={st.alignment === a} class={st.alignment === a ? 'on' : ''} onClick={() => set({ alignment: a })}>{a === 'left' ? '⇤' : a === 'center' ? '↔' : '⇥'}</button>)}
+        <button title="Larger" aria-label="Larger" onClick={() => set({ size: st.size + 1 })}>A+</button>
+        <button title="Bold" aria-label="Bold" aria-pressed={st.bold} class={st.bold ? 'on' : ''} onClick={() => set({ bold: !st.bold })}><b>B</b></button>
+        <button title="Italic" aria-label="Italic" aria-pressed={st.italic} class={st.italic ? 'on' : ''} onClick={() => set({ italic: !st.italic })}><i>I</i></button>
+        <button title="Superscript" aria-label="Superscript" onClick={() => shift('super')}>x²</button>
+        <button title="Subscript" aria-label="Subscript" onClick={() => shift('sub')}>x₂</button>
+        <button title="Underline" aria-label="Underline" aria-pressed={!!st.underline} class={st.underline ? 'on' : ''} onClick={() => set({ underline: !st.underline })}><u>U</u></button>
+        {(['left', 'center', 'right', 'justify'] as const).map((a) => <button key={a} title={`Align ${a}`} aria-label={`Align ${a}`} aria-pressed={st.alignment === a} class={st.alignment === a ? 'on' : ''} onClick={() => set({ alignment: a })}>{a === 'left' ? '⇤' : a === 'center' ? '↔' : a === 'right' ? '⇥' : '☰'}</button>)}
+        <select aria-label="Font" title="Font" value={st.family} onChange={(e) => set({ family: (e.target as HTMLSelectElement).value })}>
+          {[...new Set([original.family, ...FONT_CHOICES])].map((f) => <option key={f} value={f}>{f === original.family && b ? `${f} (original)` : f}</option>)}
+        </select>
+        <button title="Bulleted list" aria-label="Bulleted list" aria-pressed={st.list === 'bullet'} class={st.list === 'bullet' ? 'on' : ''} onClick={() => set({ list: st.list === 'bullet' ? undefined : 'bullet' })}>•≡</button>
+        <button title="Numbered list" aria-label="Numbered list" aria-pressed={st.list === 'number'} class={st.list === 'number' ? 'on' : ''} onClick={() => set({ list: st.list === 'number' ? undefined : 'number' })}>1≡</button>
+        <select aria-label="Space after paragraphs" title="Space after paragraphs" value={String(st.spaceAfter ?? 0)} onChange={(e) => set({ spaceAfter: Number((e.target as HTMLSelectElement).value) || undefined })}>
+          {[0, 6, 12, 18].map((v) => <option key={v} value={String(v)}>{v ? `+${v} pt` : 'No gap'}</option>)}
+        </select>
+        <select aria-label="Letter spacing" title="Letter spacing" value={String(st.charSpacing ?? 0)} onChange={(e) => set({ charSpacing: Number((e.target as HTMLSelectElement).value) || undefined })}>
+          {([[-0.03, 'Letters tight'], [0, 'Letters normal'], [0.03, 'Letters wide'], [0.06, 'Letters wider']] as const).map(([v, label]) => <option key={v} value={String(v)}>{label}</option>)}
+        </select>
+        <select aria-label="Letter width" title="Letter width" value={String(st.hScale ?? 100)} onChange={(e) => set({ hScale: Number((e.target as HTMLSelectElement).value) === 100 ? undefined : Number((e.target as HTMLSelectElement).value) })}>
+          {[80, 90, 100, 110, 120].map((v) => <option key={v} value={String(v)}>{v === 100 ? 'Width 100%' : `${v}%`}</option>)}
+        </select>
+        <select aria-label="Line spacing" title="Line spacing" value={String(st.lineSpacing ?? 1)} onChange={(e) => set({ lineSpacing: Number((e.target as HTMLSelectElement).value) })}>
+          {[1, 1.15, 1.5, 2].map((v) => <option key={v} value={String(v)}>{v === 1 ? 'Spacing ×1' : `×${v}`}</option>)}
+        </select>
         <input type="color" aria-label="Text colour" title="Text colour" value={'#' + st.color.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}
           onInput={(e) => { const h = (e.target as HTMLInputElement).value; set({ color: [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as never }); }} />
         <button class="primary" onClick={done}>Done</button>
         <button title="Cancel" aria-label="Cancel" onClick={() => onDone(null)}>✕</button>
       </div>
-      <div ref={ref} class="mk-editor" role="textbox" aria-multiline="true" aria-label="Paragraph text" dir={b?.rtl || hasArabic(editor.text) ? 'rtl' : 'auto'} contentEditable style={style as never} onPointerDown={(e) => e.stopPropagation()}
+      <div ref={ref} class="mk-editor" role="textbox" aria-multiline="true" aria-label="Paragraph text" spellcheck dir={b?.rtl || hasArabic(editor.text) ? 'rtl' : 'auto'} contentEditable style={style as never} onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onDone(null); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) done(); }}
         onBlur={(e) => { if (!(e.relatedTarget as HTMLElement | null)?.closest('.mk-editbar')) setTimeout(done, 0); }} />
     </>

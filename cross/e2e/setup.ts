@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export const DATA = path.join(import.meta.dirname, '.data');
@@ -81,6 +81,7 @@ export default async function setup() {
   }, [w, h, lines, size, bg] as const);
   const scanPng = Buffer.from(await draw(1700, 2200, ['INVOICE NUMBER 4471', 'Total amount due 920 dollars', 'Thank you for your business'], 64, '#fdfdf8'), 'base64');
   const photo = Buffer.from(await draw(800, 600, ['Photo'], 80, '#8ac'), 'base64');
+  const icon = Buffer.from(await draw(20, 20, [''], 10, '#c33'), 'base64');
   // A clean line and a worn one: the striped word comes back with low confidence.
   const hardPng = Buffer.from(await page.evaluate(() => {
     const c = document.createElement('canvas');
@@ -113,6 +114,20 @@ export default async function setup() {
   const r = await report();
   const write = (name: string, bytes: Uint8Array | Buffer | string) => fs.writeFileSync(path.join(DATA, name), bytes);
   write('report.pdf', r);
+  {
+    // A reviewer's sticky note on the sentence, and the author's reply to it.
+    const d = await PDFDocument.load(r);
+    const page = d.getPage(0);
+    const note = d.context.register(d.context.obj({
+      Type: 'Annot', Subtype: 'Text', Rect: [400, 628, 420, 648], Contents: PDFString.of('Check this account number'), T: PDFString.of('Reviewer'),
+      M: PDFString.of('D:20261101093000Z'), Name: 'Comment',
+    }));
+    const reply = d.context.register(d.context.obj({ Type: 'Annot', Subtype: 'Text', Rect: [400, 628, 420, 648], Contents: PDFString.of('Fixed'), T: PDFString.of('Author'), IRT: note }));
+    page.node.addAnnot(note);
+    page.node.addAnnot(reply);
+    void PDFName;
+    write('commented.pdf', await d.save());
+  }
   write('Résumé 📄 تقرير.pdf', r);
   write(`${'long-name-'.repeat(20)}.pdf`, r);
   write('form.pdf', await form());
@@ -122,6 +137,15 @@ export default async function setup() {
   write('scan-hard.pdf', await scan(hardPng));
   write('scan-tilted.pdf', await scan(tiltedPng));
   write('photo.png', photo);
+  {
+    // Text and a picture on one page.
+    const d = await PDFDocument.create();
+    const pg = d.addPage([612, 792]);
+    pg.drawText('A page with a photograph below.', { x: 72, y: 700, size: 14, font: await d.embedFont(StandardFonts.Helvetica) });
+    pg.drawImage(await d.embedPng(photo), { x: 72, y: 380, width: 300, height: 225 });
+    pg.drawImage(await d.embedPng(icon), { x: 400, y: 700, width: 12, height: 12 }); // a small icon
+    write('with-picture.pdf', await d.save());
+  }
   write('not-a-pdf.pdf', 'this is plain text, not a PDF');
   write('empty.pdf', '');
   // Damaged the usual ways: cross-reference table and trailer lost, or the offsets in them wrong.

@@ -133,6 +133,7 @@ h1, h2, h3, h4 { margin: 0; }
 .mk-editor { position: absolute; z-index: 5; pointer-events: auto; background: #fff; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; padding: 0 3px; min-height: 1em; cursor: text; }
 .mk-editbar { position: absolute; z-index: 6; pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; white-space: nowrap; }
 .mk-editbar button { border: 0; background: transparent; border-radius: 8px; padding: 5px 8px; min-width: 28px; }
+.mk-editbar select { border: 0; background: transparent; border-radius: 8px; padding: 4px 2px; font: inherit; font-size: 12px; max-width: 150px; color: inherit; }
 .mk-editbar button.on { background: rgba(225, 48, 108, 0.14); }
 @media (hover: hover) { .mk-editbar button:hover { background: rgba(225, 48, 108, 0.14); } }
 .mk-editbar button.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }

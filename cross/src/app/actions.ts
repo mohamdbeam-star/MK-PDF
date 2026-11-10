@@ -2,7 +2,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { platform } from './platform';
 import {
-  active, busy, dialog, docs, editObject, newDocument, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showSaved, showToast, task,
+  active, busy, choose, dialog, docs, editObject, newDocument, tool, openDocument, organizing, pageIndex, prompt, readMode, selectedAnnot, showSaved, showToast, task,
 } from './store';
 import * as ops from '../pdf/ops';
 import * as annots from '../pdf/annots';
@@ -62,7 +62,7 @@ export async function edit(label: string, fn: (doc: PDFDocument) => Promise<void
 export const undo = () => active.value?.undo();
 export const redo = () => active.value?.redo();
 
-export async function exportAs(format: DocFormat, ocr: boolean, opts: { flow?: boolean } = {}) {
+export async function exportAs(format: DocFormat, ocr: boolean, opts: { flow?: boolean; images?: boolean; comments?: boolean } = {}) {
   const d = active.value;
   if (!d?.js) return;
   const info = DOC_FORMATS.find((f) => f.id === format)!;
@@ -90,6 +90,22 @@ export async function exportAs(format: DocFormat, ocr: boolean, opts: { flow?: b
   if (saved) { showSaved(`Exported to ${saved.label}`); platform.notify('Export finished', saved.label); }
 }
 
+/** Exports the part of a page inside a dragged box, as Word, Excel or CSV. */
+export async function exportAreaAs(page: number, r: { x: number; y: number; w: number; h: number }) {
+  const d = active.value;
+  if (!d?.js) return;
+  const pick = await choose('Export this area', ['Word (.docx)', 'Excel (.xlsx)', 'CSV (.csv)']);
+  tool.value = 'select';
+  if (pick === null) return;
+  const format = (['docx', 'xlsx', 'csv'] as const)[pick];
+  const { exportArea } = await import('../pdf/exporter');
+  const bytes = await task('Exporting…', async () => exportArea(await d.currentBytes(), d.js!, page, r, format));
+  if (bytes === undefined) return;
+  if (!bytes) return showToast('No text or tables in that area.');
+  const saved = await platform.saveFile(`${base(d.name)} (part).${format}`, bytes, MIME[format]);
+  if (saved) showSaved(`Exported to ${saved.label}`);
+}
+
 export async function exportPageImages(type: 'png' | 'jpeg' | 'webp', dpi: number, quality: number) {
   const d = active.value;
   if (!d?.js) return;
@@ -97,10 +113,11 @@ export async function exportPageImages(type: 'png' | 'jpeg' | 'webp', dpi: numbe
   if (!images) return;
   const ext = type === 'jpeg' ? 'jpg' : type;
   const where = await platform.saveMany(images.map((b, i) => ({ name: `${base(d.name)}-${i + 1}.${ext}`, bytes: b })), `image/${type}`);
-  if (where) showSaved(`Saved ${images.length} images to ${where}`);
+  if (where) showSaved(`Saved ${images.length} ${images.length === 1 ? 'image' : 'images'} to ${where}`);
 }
 
-export async function extractImages() {
+/** Saves every picture in the document; pictures under `minPixels` on their longer side (icons, bullets, specks) are skipped. */
+export async function extractImages(minPixels = 0) {
   const d = active.value;
   if (!d?.js) return;
   const files = await task('Extracting images…', async () => {
@@ -113,6 +130,7 @@ export async function extractImages() {
       const pc = new PageContent(doc, doc.getPage(p.index));
       for (const obj of pc.objects.filter((o) => o.kind !== 'form')) {
         const info = pc.imageStream(obj);
+        if (minPixels && Math.max(info?.width || obj.bounds.w * 3, info?.height || obj.bounds.h * 3) < minPixels) continue;
         if (info?.jpeg) { out.push({ name: `${base(d.name)} p${p.index + 1} image ${out.length + 1}.jpg`, bytes: info.stream.getContents() }); continue; }
         const canvas = await renderPage(d.js!, p.index, 3, { annotations: false });
         const vp = (await d.js!.getPage(p.index + 1)).getViewport({ scale: 3 });
@@ -126,9 +144,9 @@ export async function extractImages() {
     return out;
   });
   if (!files) return;
-  if (!files.length) return showToast('No images in this document.');
+  if (!files.length) return showToast(minPixels ? `No images of ${minPixels} pixels or more.` : 'No images in this document.');
   const where = await platform.saveMany(files, 'image/*');
-  if (where) showSaved(`Saved ${files.length} images to ${where}`);
+  if (where) showSaved(`Saved ${files.length} ${files.length === 1 ? 'image' : 'images'} to ${where}`);
 }
 
 export async function runOcr(pages: number[] | null, languages: string, skipText: boolean, clean = true) {

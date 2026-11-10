@@ -5,6 +5,7 @@ import { PDFDocument } from 'pdf-lib';
 import { PageLayout, PageText, layoutPage } from '../engine/layout';
 import { Assets, csv, docx, html, markdown, odt, plainText, pptx, rtf, xlsx } from '../export/writers';
 import { loadPdf } from '../engine/load';
+import type { ExportComment } from '../export/comments';
 
 export type DocFormat = 'docx' | 'doc' | 'odt' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
 
@@ -17,13 +18,23 @@ export async function layoutsFor(bytes: Uint8Array, text: (page: number) => Prom
 
 const none: Assets = { image: async () => null, background: async () => null };
 
-export async function convertLayouts(all: PageLayout[], format: DocFormat, title: string, assets: Assets = none, opts: { flow?: boolean } = {}): Promise<Uint8Array> {
+export interface ConvertOptions {
+  /** Word as flowing text rather than each page's exact layout. */
+  flow?: boolean;
+  /** False leaves pictures out (text and tables only). */
+  images?: boolean;
+  /** The PDF's comments, for Word. */
+  comments?: ExportComment[];
+}
+
+export async function convertLayouts(all: PageLayout[], format: DocFormat, title: string, assets: Assets = none, opts: ConvertOptions = {}): Promise<Uint8Array> {
   const enc = (s: string) => new TextEncoder().encode(s);
   // A scan's page image goes behind its recognised text only in Word, and only where the app paints that text out.
-  const pages = format === 'docx' && assets.scanBackground ? all
-    : all.map((p) => ({ ...p, items: p.items.filter((i) => !(i.kind === 'image' && i.scan)) }));
+  const pages = (format === 'docx' && assets.scanBackground ? all
+    : all.map((p) => ({ ...p, items: p.items.filter((i) => !(i.kind === 'image' && i.scan)) })))
+    .map((p) => (opts.images === false ? { ...p, items: p.items.filter((i) => i.kind !== 'image') } : p));
   switch (format) {
-    case 'docx': return docx(pages, assets, opts);
+    case 'docx': return docx(pages, assets, { flow: opts.flow, comments: opts.comments });
     case 'pptx': return pptx(pages, assets);
     case 'html': return html(pages, title, assets);
     case 'xlsx': return xlsx(pages);

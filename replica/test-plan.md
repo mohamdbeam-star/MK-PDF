@@ -74,6 +74,16 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F04-E8 | F04 | edge: letters missing from the subset | type "Zebra 42! Ψ" into it | falls back to a full font, text intact | e2e | pass |
 | F04-H4 | F04 | happy | drag a paragraph's width handle to a third | text reflows onto more lines, every word kept | e2e | pass |
 | F04-E9 | F04 | edge: Shift while moving | Shift-drag a paragraph diagonally | moves sideways only, same baseline | e2e | pass |
+| F04-H5 | F04 | happy | justify a long edit | all lines but the last end at one right edge; words in order | e2e | pass |
+| F04-E10 | F04 | happy | underline | one rule added under the text | e2e | pass |
+| F04-E11 | F04 | happy | line spacing ×2 | gap between baselines doubles | e2e | pass |
+| F04-E12 | F04 | happy | font menu: Courier New | edit written in a Courier or mono font | e2e | pass |
+| F04-H6 | F04 | happy | three lines as a bulleted list | a bullet before each, text indented | e2e | pass |
+| F04-E13 | F04 | edge: number already typed | "1. First", Second, Third as a numbered list | 1., 2., 3., never "1. 1." | e2e | pass |
+| F04-E14 | F04 | happy | +12 pt after paragraphs | gap grows by 12 pt | e2e | pass |
+| F04-E15 | F04 | happy | letters wider (+6%) and width 120% | text widens by the expected amount and still reads as words | e2e | pass |
+| F04-E16 | F04 | happy | select the 2 in m2 and in H2O; Superscript, Subscript | saved text reads m² and H₂O | e2e | pass |
+| F04-N1 | F04 | negative: no raised form | select TM, Superscript | message, text unchanged | e2e | pass |
 | F05-H1 | F05 | happy | sticky note, text box, rectangle, drawing | four annotations on page 1, none on page 2 | e2e | pass |
 | F05-H2 | F05 | happy | Highlight tool, drag over a sentence | Highlight annotation | e2e | pass |
 | F05-N1 | F05 | negative: cancel | sticky note, Cancel | nothing added | e2e | pass |
@@ -105,6 +115,13 @@ errors and 5xx responses; the release check to GitHub is answered locally so tes
 | F11-H4 | F11 | happy | Word export of a scan with recognition | real text in the .docx | e2e | pass |
 | F11-H5 | F11 | happy | Compress | valid 1-page file | e2e | pass |
 | F11-H6 | F11 | happy | Word export as flowing text | one section, no fixed line heights, every page title kept, Heading styles, page-number field | e2e | pass |
+| F11-H7 | F11 | happy | Export › Selected area around one sentence › Word | only that sentence in the file | e2e | pass |
+| F11-H8 | F11 | happy | same area › CSV | only that sentence | e2e | pass |
+| F11-N1 | F11 | negative: empty area | box over blank paper | "No text or tables in that area" | e2e | pass |
+| F11-H9 | F11 | happy | Word export with Include pictures off, then on | no media without; media with; text kept | e2e | pass |
+| F11-H10 | F11 | happy | extract images, then skip under 100 px | 2 files, then 1 | e2e | pass |
+| F11-H11 | F11 | happy | Word export of a page with a sticky note and a reply | one Word comment, author and date kept, reply folded in, on the nearest paragraph | e2e | pass |
+| F11-E3 | F11 | edge: comments off | Include comments unchecked | no comments part | e2e | pass |
 | F12-H1 | F12 | happy | change, Save | same name, unsaved dot cleared | e2e | pass |
 | F12-E1 | F12 | edge: close unsaved | close, decline, close, accept | kept, then closed | e2e | pass |
 | F12-E2 | F12 | edge: two documents | change one, check the other | other untouched | e2e | pass |

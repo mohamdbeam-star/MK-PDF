@@ -452,11 +452,21 @@ struct ExportPanel: View {
     @State private var dpi = 150.0
     @State private var ocr = true
     @State private var quality = 0.9
+    @AppStorage(ExportFormat.wordFlowKey) private var wordFlow = false
+    @AppStorage(ExportFormat.imagesKey) private var pictures = true
+    @AppStorage(ExportFormat.commentsKey) private var comments = true
 
     var body: some View {
         Text("Layout, fonts, colours, tables and images are rebuilt from the page, so files open looking like the PDF.")
             .font(.caption).foregroundStyle(.secondary)
         Toggle("Recognize text in scanned pages (OCR)", isOn: $ocr).font(.callout)
+        Toggle("Include pictures", isOn: $pictures).font(.callout)
+        Toggle("Include comments (Word)", isOn: $comments).font(.callout)
+        Picker("Word layout", selection: $wordFlow) {
+            Text("Keep page layout").tag(false)
+            Text("Flowing text (easier to edit)").tag(true)
+        }
+        .font(.callout)
         SectionTitle("Office")
         ActionRow(title: "Word (.docx)", symbol: "doc.richtext", detail: "Editable paragraphs, tables and images") { editor.exportOffice(.word, ocr: ocr) }
         ActionRow(title: "Excel (.xlsx)", symbol: "tablecells", detail: "Tables keep their columns; one sheet per page") { editor.exportOffice(.excel, ocr: ocr) }

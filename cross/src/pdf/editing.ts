@@ -1,5 +1,8 @@
 // Editing existing page content: text, images, redaction. Uses the content engine on pdf-lib objects.
-import { PDFDocument, PDFName, PDFDict, PDFHexString, PDFNumber, PDFOperator, PDFOperatorNames as Ops, PDFRawStream, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import {
+  PDFDocument, PDFName, PDFDict, PDFHexString, PDFNumber, PDFOperator, PDFOperatorNames as Ops, PDFRawStream, popGraphicsState, pushGraphicsState, rgb,
+  setCharacterSpacing, setCharacterSqueeze, type PDFFont, type PDFPage,
+} from 'pdf-lib';
 import { LayoutParagraph, lineSize } from '../engine/layout';
 import { FontEncoder, GraphicObject, PageContent, Rect, contains, containsRect, intersects, isSpace, maxX, maxY, rect } from '../engine/pageContent';
 import { num, op } from '../engine/contentStream';
@@ -7,7 +10,24 @@ import { fontFor, wrap } from './fonts';
 import { listAnnots, isRedaction, deleteAnnot } from './annots';
 import { toPngOrJpeg } from './ops';
 
-export interface TextStyle { family: string; bold: boolean; italic: boolean; size: number; color: [number, number, number]; alignment: 'left' | 'center' | 'right' | 'justify' }
+export interface TextStyle {
+  family: string; bold: boolean; italic: boolean; size: number; color: [number, number, number]; alignment: 'left' | 'center' | 'right' | 'justify';
+  underline?: boolean;
+  /** Multiplies the paragraph's own line spacing (1 keeps it). */
+  lineSpacing?: number;
+  /** Extra space after each paragraph (each line of the edit that ends with Enter), in points. */
+  spaceAfter?: number;
+  /** Each paragraph of the edit as a list item. */
+  list?: 'bullet' | 'number';
+  /** Extra space after every letter, as a share of the font size. Kept small (up to 6%): readers split wider-spaced
+   *  words into single letters, which breaks search and copy. */
+  charSpacing?: number;
+  /** Letter width in percent (100 keeps the font's own). */
+  hScale?: number;
+}
+
+/** A marker the text already starts with ("•", "-", "3." or "3)"), so a list doesn't get two. */
+const MARKER = /^\s*(?:[•●▪◦‣∙–-]|\d+[.)])\s+/;
 
 /** Replaces a paragraph (or adds new text when `block` is null), removing the original glyphs from the page. */
 export async function commitText(doc: PDFDocument, pageIndex: number, block: LayoutParagraph | null, text: string, style: TextStyle,
@@ -15,10 +35,12 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
   /** Scanned text: paint these rects in the paper colour first, hiding the old letters' pixels. */
   cover?: { rects: Rect[]; paper: [number, number, number] }) {
   const page = doc.getPage(pageIndex);
+  // The characters drawn, list markers included (the font chosen must have them all).
+  const withMarkers = style.list === 'bullet' ? `${text}•` : style.list === 'number' ? `${text}0123456789.` : text;
   let own: FontEncoder | null = null;
   if (block) {
     const pc = new PageContent(doc, page);
-    own = ownFont(pc, block, style, text);
+    own = ownFont(pc, block, style, withMarkers);
     const rects = block.lines.map((l) => ({ x: l.rect.x - 0.5, y: l.rect.y - 0.5, w: l.rect.w + 1, h: l.rect.h + 1 }));
     // The blank spaces padding each line (a table cell's fill, however long) go too: left behind, they'd sit among
     // the new letters and split its words when the text is read or copied.
@@ -37,31 +59,66 @@ export async function commitText(doc: PDFDocument, pageIndex: number, block: Lay
   }
   for (const r of cover?.rects ?? []) page.drawRectangle({ x: r.x, y: r.y, width: r.w, height: r.h, color: rgb(...cover!.paper) });
   if (!text.trim()) return;
-  const pitch = block?.pitch ?? style.size * 1.2;
+  const pitch = (block?.pitch ?? style.size * 1.2) * (style.lineSpacing ?? 1);
+  const color = rgb(...style.color);
+  /** Lays the text out paragraph by paragraph: list markers in a hanging indent, lines wrapped and aligned in the box,
+   *  justified lines spread word by word, the chosen space after each paragraph. */
+  const place = (width: (t: string) => number, draw: (t: string, x: number, y: number) => void) => {
+    const measure = { widthOfTextAtSize: (t: string) => width(t) };
+    const indent = style.list ? style.size * 1.4 : 0;
+    let y = origin.y, n = 0;
+    for (const para of text.split('\n')) {
+      const body = style.list ? para.replace(MARKER, '') : para;
+      const lines = wrap(body, measure, 1, wrapWidth === undefined ? undefined : Math.max(style.size * 3, wrapWidth - indent));
+      if (style.list && body.trim()) draw(style.list === 'bullet' ? '•' : `${++n}.`, origin.x, y);
+      lines.forEach((line, i) => {
+        const last = i === lines.length - 1;
+        const left = origin.x + indent;
+        const w = width(line);
+        const box = (boxWidth ?? wrapWidth ?? w + indent) - indent;
+        const words = line.split(/ +/).filter(Boolean);
+        if (style.alignment === 'justify' && !last && words.length > 1 && !RTL_CHAR.test(line) && box > w) {
+          const gap = (box - words.reduce((sum, t) => sum + width(t), 0)) / (words.length - 1);
+          let x = left;
+          for (const t of words) { draw(t, x, y); x += width(t) + gap; }
+          if (style.underline) underline(left, y, box);
+        } else {
+          const x = left + (style.alignment === 'center' ? (box - w) / 2 : style.alignment === 'right' ? box - w : 0);
+          draw(line, x, y);
+          if (style.underline && w > 0) underline(x, y, w);
+        }
+        y -= pitch;
+      });
+      y -= style.spaceAfter ?? 0;
+    }
+  };
+  // Letter spacing and width, set around each piece of text (both drawing paths inherit them); widths follow the
+  // PDF's rule: (advance + spacing per letter) × width. Right-to-left text is left as it is: spacing would break
+  // its joined letters.
+  const cs = (style.charSpacing ?? 0) * style.size, hs = (style.hScale ?? 100) / 100;
+  const plainSpacing = !cs && hs === 1;
+  const spaced = (width: (t: string) => number) => (t: string) =>
+    plainSpacing || RTL_CHAR.test(t) ? width(t) : (width(t) + cs * [...t].length) * hs;
+  const inState = (draw: (t: string, x: number, y: number) => void) => (t: string, x: number, y: number) => {
+    if (plainSpacing || RTL_CHAR.test(t)) return draw(t, x, y);
+    page.pushOperators(pushGraphicsState(), setCharacterSpacing(cs), setCharacterSqueeze(hs * 100));
+    draw(t, x, y);
+    page.pushOperators(popGraphicsState());
+  };
+  const underline = (x: number, y: number, w: number) =>
+    page.drawRectangle({ x, y: y - style.size * 0.13, width: w, height: Math.max(0.5, style.size * 0.06), color });
   if (own) {
     // The paragraph's own embedded font has every letter: the new text looks exactly like the old.
     const enc = own;
-    const measure = { widthOfTextAtSize: (t: string, s: number) => encodedWidth(enc, t) * s };
-    wrap(text, measure, style.size, wrapWidth).forEach((line, i) => {
-      const w = measure.widthOfTextAtSize(line, style.size);
-      const box = boxWidth ?? wrapWidth ?? w;
-      const x = origin.x + (style.alignment === 'center' ? (box - w) / 2 : style.alignment === 'right' ? box - w : 0);
-      drawEncoded(doc, page, enc, line, x, origin.y - i * pitch, style.size, style.color);
-    });
+    place(spaced((t) => encodedWidth(enc, t) * style.size), inState((t, x, y) => drawEncoded(doc, page, enc, t, x, y, style.size, style.color)));
     return;
   }
-  const font = await fontFor(doc, { family: style.family, bold: style.bold, italic: style.italic, text });
+  const font = await fontFor(doc, { family: style.family, bold: style.bold, italic: style.italic, text: withMarkers });
   // Mixed Arabic and Latin text: the Arabic font may lack Latin letters, so left-to-right runs get their own font.
   const latinText = text.replace(new RegExp(RTL_CHAR.source, 'g'), '');
   const latin = RTL_CHAR.test(text) && /\p{L}/u.test(latinText)
     ? await fontFor(doc, { family: style.family, bold: style.bold, italic: style.italic, text: latinText }) : font;
-  const lines = wrap(text, font, style.size, wrapWidth);
-  lines.forEach((line, i) => {
-    const w = font.widthOfTextAtSize(line, style.size);
-    const box = boxWidth ?? wrapWidth ?? w;
-    const x = origin.x + (style.alignment === 'center' ? (box - w) / 2 : style.alignment === 'right' ? box - w : 0);
-    drawBidi(page, line, x, origin.y - i * pitch, style.size, font, rgb(...style.color), latin);
-  });
+  place(spaced((t) => font.widthOfTextAtSize(t, style.size)), inState((t, x, y) => drawBidi(page, t, x, y, style.size, font, color, latin)));
 }
 
 const RTL_CHAR = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;

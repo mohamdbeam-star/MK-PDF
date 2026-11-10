@@ -311,7 +311,7 @@ extension EditSmokeTest {
                 }
                 if ProcessInfo.processInfo.environment["MKPDF_KEEP_OCR"] != nil { try? PDFExporter.data(for: copy).write(to: outDir.appendingPathComponent("\(name)-p\(p + 1)-ocr.pdf")) }
                 do {
-                    let data = try CoreConverter.convert(copy, format: "docx", title: name)
+                    let data = try CoreConverter.convert(copy, format: "docx", title: name, flow: ProcessInfo.processInfo.environment["MKPDF_WORD_FLOW"] == "1")
                     try data.write(to: outDir.appendingPathComponent("\(name)-p\(p + 1).docx"))
                     print(String(format: "%@ p%d: %d bytes in %.1fs", name, p + 1, data.count, Date().timeIntervalSince(t0)))
                 } catch { print("\(name) p\(p + 1): FAILED \(error.localizedDescription)") }

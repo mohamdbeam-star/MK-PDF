@@ -1,13 +1,14 @@
 // Turns a document into other formats using the layout model, with pdf.js rendering for pictures.
 import { PDFDocument } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { layoutPage, PageLayout } from '../engine/layout';
+import { LayoutItem, layoutPage, PageLayout } from '../engine/layout';
 import { pageTextItems } from '../engine/textItems';
-import { PageContent, Rect } from '../engine/pageContent';
+import { PageContent, Rect, contains, union } from '../engine/pageContent';
 import { Assets, csv, docx, html, markdown, odt, plainText, pptx, rtf, xlsx } from '../export/writers';
 import { canvasBytes, renderPage } from './render';
 import { openPdfjs } from './doc';
 import { loadPdf } from '../engine/load';
+import { pdfComments } from '../export/comments';
 
 export type DocFormat = 'docx' | 'doc' | 'odt' | 'xlsx' | 'pptx' | 'html' | 'md' | 'txt' | 'csv' | 'rtf';
 export const DOC_FORMATS: { id: DocFormat; title: string; detail: string }[] = [
@@ -76,12 +77,33 @@ function assetsFor(doc: PDFDocument, js: PDFDocumentProxy): Assets {
   };
 }
 
-export async function exportDocument(bytes: Uint8Array, js: PDFDocumentProxy, format: DocFormat, title: string, opts: { flow?: boolean } = {}): Promise<Uint8Array> {
-  const { doc, pages } = await layouts(bytes, js);
+/**
+ * Part of one page as Word (flowing text), Excel or CSV: the lines, tables and pictures whose middle is inside
+ * `area` (page space). Null when nothing is there.
+ */
+export async function exportArea(bytes: Uint8Array, js: PDFDocumentProxy, page: number, area: Rect, format: 'docx' | 'xlsx' | 'csv'): Promise<Uint8Array | null> {
+  const doc = await loadPdf(bytes);
+  const full = layoutPage(doc, page, await pageTextItems(js, page + 1));
+  const inside = (r: Rect) => contains(area, { x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  const items = full.items.flatMap((it): LayoutItem[] => {
+    if (it.kind !== 'paragraph') return inside(it.rect) ? [it] : [];
+    const lines = it.lines.filter((l) => inside(l.rect));
+    return lines.length ? [{ ...it, lines, rect: lines.reduce<Rect>((a, l) => union(a, l.rect)!, lines[0].rect) }] : [];
+  });
+  if (!items.length) return null;
+  const part: PageLayout = { ...full, items, boxes: [], columns: [], rules: full.rules.filter((r) => inside(r.rect)) };
+  if (format === 'docx') return docx([part], assetsFor(doc, js), { flow: true });
+  if (format === 'xlsx') return xlsx([part]);
+  return new TextEncoder().encode(csv([part]));
+}
+
+export async function exportDocument(bytes: Uint8Array, js: PDFDocumentProxy, format: DocFormat, title: string, opts: { flow?: boolean; images?: boolean; comments?: boolean } = {}): Promise<Uint8Array> {
+  const { doc, pages: all } = await layouts(bytes, js);
+  const pages = opts.images === false ? all.map((p) => ({ ...p, items: p.items.filter((i) => i.kind !== 'image') })) : all;
   const assets = assetsFor(doc, js);
   const enc = (s: string) => new TextEncoder().encode(s);
   switch (format) {
-    case 'docx': return docx(pages, assets, opts);
+    case 'docx': return docx(pages, assets, { flow: opts.flow, comments: opts.comments === false ? [] : pdfComments(doc) });
     case 'pptx': return pptx(pages, assets);
     case 'html': return html(pages, title, assets);
     case 'xlsx': return xlsx(pages);

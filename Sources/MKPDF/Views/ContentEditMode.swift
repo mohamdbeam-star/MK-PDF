@@ -184,6 +184,8 @@ extension MKPDFView {
         tv.string = block?.text ?? ""
         tv.isRichText = false
         tv.allowsUndo = true
+        // Misspellings underlined as you type; Control-click offers the system's suggestions.
+        tv.isContinuousSpellCheckingEnabled = true
         tv.drawsBackground = true
         tv.backgroundColor = .white
         tv.textContainerInset = .zero
